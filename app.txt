@@ -1,0 +1,1889 @@
+import React, { useMemo, useState } from "react";
+
+const ROLES = {
+  CEO: "CEO",
+  MANAGER: "MANAGER",
+  EMPLOYEE: "EMPLOYEE",
+};
+
+const PROFILES = [
+  { id: 1, name: "CEO Admin", role: ROLES.CEO, title: "Chief Executive Officer" },
+  { id: 2, name: "Aziz Nazarov", role: ROLES.MANAGER, title: "Rahbar" },
+  { id: 3, name: "Dildora Yusupova", role: ROLES.EMPLOYEE, title: "Xodim" },
+];
+
+const INIT_EMPLOYEES = [
+  { id: 1, name: "Aziz Nazarov", role: "Project Manager", dept: "Project Management", salary: 18000000 },
+  { id: 2, name: "Dildora Yusupova", role: "SMM Specialist", dept: "SMM bolimi", salary: 9500000 },
+  { id: 3, name: "Bobur Toshev", role: "Targeting Specialist", dept: "Target bolimi", salary: 10000000 },
+  { id: 4, name: "Kamola Mirzaeva", role: "Videographer", dept: "Media bolimi", salary: 9000000 },
+  { id: 5, name: "Sardor Holmatov", role: "Sales Manager", dept: "Sales bolimi", salary: 12000000 },
+];
+
+const INIT_PROJECTS = [
+  {
+    id: 1,
+    name: "NovaTech Branding",
+    client: "NovaTech LLC",
+    type: "Branding + SMM",
+    start: "2026-02-01",
+    end: "2026-04-30",
+    manager: 1,
+    team: [1, 2, 4],
+    status: "In Progress",
+    priority: "High",
+    tasks: [
+      { id: 1, name: "Brief tayyorlash", owner: 1, start: "2026-02-01", deadline: "2026-02-05", status: "Done", doneDate: "2026-02-05", note: "Mijoz tasdiqladi" },
+      { id: 2, name: "Strategiya hujjati", owner: 1, start: "2026-02-06", deadline: "2026-02-15", status: "Done", doneDate: "2026-02-14", note: "" },
+      { id: 3, name: "Instagram kontent", owner: 2, start: "2026-03-01", deadline: "2026-03-31", status: "In Progress", doneDate: "", note: "Haftalik 5 post" },
+      { id: 4, name: "Syomka prep", owner: 4, start: "2026-03-10", deadline: "2026-03-20", status: "Planned", doneDate: "", note: "Lokatsiya tasdiqlash" },
+    ],
+    plans: {
+      daily: [
+        { id: 11, title: "Caption draft", taskId: 3, owner: 2, period: "2026-03-12", status: "In Progress", note: "3 ta variant" },
+      ],
+      weekly: [
+        { id: 12, title: "Haftalik reels plan", taskId: 3, owner: 2, period: "2026-W11", status: "Planned", note: "5 reels" },
+      ],
+      monthly: [
+        { id: 13, title: "Mart kontent kalendar", taskId: null, owner: 1, period: "2026-03", status: "In Progress", note: "Brend fokus" },
+      ],
+    },
+    contentPlan: [
+      { id: 1, date: "2026-03-10", platform: "Instagram", format: "Reels", topic: "Brend taqdimoti", owner: 2, status: "Done", mediaReady: true, note: "" },
+      { id: 2, date: "2026-03-12", platform: "TikTok", format: "Video", topic: "How-to", owner: 4, status: "Done", mediaReady: true, note: "" },
+      { id: 3, date: "2026-03-17", platform: "Facebook", format: "Post", topic: "Aksiya", owner: 2, status: "In Progress", mediaReady: false, note: "" },
+      { id: 4, date: "2026-03-19", platform: "Instagram", format: "Story", topic: "Sorovnoma", owner: 2, status: "Planned", mediaReady: false, note: "" },
+    ],
+    mediaplan: [
+      { id: 1, date: "2026-03-10", platform: "Instagram", type: "Reach", budget: 1200000, owner: 3, status: "Done", note: "CPM yaxshi" },
+    ],
+    calls: [
+      { id: 1, date: "2026-03-05", type: "Call", who: 1, result: "Progress yaxshi", next: "Syomka" },
+    ],
+    report: { budget: 5000000, leads: 142, cpl: 35211, sales: 12, roi: 2.4 },
+  },
+  {
+    id: 2,
+    name: "GreenFood SMM",
+    client: "GreenFood Market",
+    type: "SMM + Target",
+    start: "2026-01-15",
+    end: "2026-03-31",
+    manager: 1,
+    team: [1, 2, 3, 4],
+    status: "In Progress",
+    priority: "Medium",
+    tasks: [
+      { id: 21, name: "Brief", owner: 1, start: "2026-01-15", deadline: "2026-01-18", status: "Done", doneDate: "2026-01-17", note: "" },
+      { id: 22, name: "Target optimizatsiya", owner: 3, start: "2026-03-10", deadline: "2026-03-25", status: "In Progress", doneDate: "", note: "" },
+    ],
+    plans: { daily: [], weekly: [], monthly: [] },
+    contentPlan: [],
+    mediaplan: [],
+    calls: [],
+    report: { budget: 3500000, leads: 98, cpl: 35714, sales: 8, roi: 1.8 },
+  },
+];
+
+const INIT_SHOOTINGS = [
+  { id: 1, date: "2026-03-20", project: 1, type: "Product photo", location: "Studio A", operator: 4, goal: "Instagram kontent", status: "Done" },
+  { id: 2, date: "2026-03-30", project: 1, type: "Behind scenes", location: "NovaTech ofisi", operator: 4, goal: "Reels seriyasi", status: "Planned" },
+];
+
+const INIT_MEETINGS = [
+  { id: 1, client: "NovaTech LLC", date: "2026-03-05", type: "Call", who: 1, result: "Progress yaxshi", next: "Syomka sana" },
+  { id: 2, client: "GreenFood", date: "2026-03-08", type: "Meeting", who: 5, result: "ROI muhokama", next: "Hisobot" },
+];
+
+const DEPT_COLORS = {
+  "SMM bolimi": "#635bff",
+  "Media bolimi": "#0a84ff",
+  "Target bolimi": "#ff9f0a",
+  "Sales bolimi": "#30d158",
+  "Project Management": "#5e5ce6",
+};
+
+const PLATFORM_COLORS = {
+  Instagram: "#e1306c",
+  TikTok: "#111827",
+  Facebook: "#1877f2",
+  YouTube: "#ff0000",
+  Telegram: "#229ed9",
+};
+
+const PLAN_SCOPES = ["daily", "weekly", "monthly"];
+const PLAN_LABEL = { daily: "Kunlik", weekly: "Haftalik", monthly: "Oylik" };
+
+function uid() {
+  return Math.floor(Math.random() * 1e9);
+}
+
+function fmtMoney(n) {
+  return `${Number(n || 0).toLocaleString("uz-UZ")} so'm`;
+}
+
+function toNum(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function clamp(n, min, max) {
+  return Math.min(max, Math.max(min, n));
+}
+
+function nowDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isLate(task) {
+  if (task.status === "Done") return false;
+  return task.deadline < nowDate();
+}
+
+function progressCalc(project) {
+  const done = project.tasks.filter((t) => t.status === "Done").length;
+  return project.tasks.length ? Math.round((done / project.tasks.length) * 100) : 0;
+}
+
+function statusMeta(status) {
+  const m = {
+    Planned: { bg: "#ececf0", text: "#6e6e73", dot: "#8e8e93" },
+    "In Progress": { bg: "#dbeafe", text: "#1d4ed8", dot: "#3b82f6" },
+    Review: { bg: "#fef3c7", text: "#92400e", dot: "#f59e0b" },
+    Approved: { bg: "#dbeafe", text: "#1d4ed8", dot: "#0a84ff" },
+    Done: { bg: "#d1fae5", text: "#047857", dot: "#10b981" },
+    Rejected: { bg: "#fee2e2", text: "#b91c1c", dot: "#ef4444" },
+  };
+  return m[status] || m.Planned;
+}
+
+function StatusPill({ status }) {
+  const m = statusMeta(status);
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: m.bg, color: m.text, fontWeight: 700, fontSize: 12, whiteSpace: "nowrap" }}>
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: m.dot }} />
+      {status}
+    </span>
+  );
+}
+
+function Avatar({ name, size = 30 }) {
+  const cols = ["#0a84ff", "#5e5ce6", "#30d158", "#ff9f0a", "#ff375f", "#64d2ff"];
+  const safe = name || "-";
+  const c = cols[safe.charCodeAt(0) % cols.length];
+  const init = safe.split(" ").map((x) => x[0]).join("").slice(0, 2).toUpperCase();
+  return <div style={{ width: size, height: size, borderRadius: "50%", background: c, color: "#fff", display: "grid", placeItems: "center", fontWeight: 800, fontSize: size * 0.38, flexShrink: 0 }}>{init}</div>;
+}
+
+function CircleProgress({ pct, done, total }) {
+  const size = 92;
+  const stroke = 10;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const d = (pct / 100) * c;
+  return (
+    <div style={{ position: "relative", width: size, height: size }}>
+      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e8e8ed" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#10b981" strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${d} ${c}`} />
+      </svg>
+      <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", lineHeight: 1.1, textAlign: "center" }}>
+        <div style={{ fontSize: 34, fontWeight: 800, color: "#10b981", letterSpacing: "-0.02em" }}>{pct}%</div>
+        <div style={{ fontSize: 13, color: "#6e6e73", marginTop: 2 }}>{done}/{total}</div>
+      </div>
+    </div>
+  );
+}
+
+function Modal({ title, children, onClose }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(28,28,30,.32)", zIndex: 9999, display: "grid", placeItems: "center", padding: 16 }}>
+      <div style={{ width: "min(820px,100%)", maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 16, border: "1px solid #e5e5ea", boxShadow: "0 20px 60px rgba(0,0,0,.18)" }}>
+        <div style={{ padding: "14px 16px", borderBottom: "1px solid #ececf0", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ fontSize: 16, fontWeight: 800 }}>{title}</div>
+          <button className="btn btn-secondary" onClick={onClose}>Yopish</button>
+        </div>
+        <div style={{ padding: 16 }}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label style={{ display: "grid", gap: 5 }}>
+      <span style={{ fontSize: 12, color: "#6e6e73", fontWeight: 600 }}>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Input(props) {
+  return <input {...props} style={{ width: "100%", border: "1px solid #d1d1d6", background: "#fff", borderRadius: 10, padding: "10px 12px", fontSize: 14, ...(props.style || {}) }} />;
+}
+
+function Select(props) {
+  return <select {...props} style={{ width: "100%", border: "1px solid #d1d1d6", background: "#fff", borderRadius: 10, padding: "10px 12px", fontSize: 14, ...(props.style || {}) }} />;
+}
+
+function Textarea(props) {
+  return <textarea {...props} style={{ width: "100%", border: "1px solid #d1d1d6", background: "#fff", borderRadius: 10, padding: "10px 12px", fontSize: 14, ...(props.style || {}) }} />;
+}
+
+function getEmployee(id, employees) {
+  return employees.find((e) => e.id === id) || null;
+}
+
+function recalcEmployeeMetrics(employees, projects) {
+  const allTasks = projects.flatMap((p) => p.tasks.map((t) => ({ ...t, projectId: p.id, isInTeam: p.team.includes(t.owner) })));
+  return employees.map((emp) => {
+    const tasks = allTasks.filter((t) => t.owner === emp.id);
+    const done = tasks.filter((t) => t.status === "Done");
+    const doneOnTime = done.filter((t) => !t.doneDate || t.doneDate <= t.deadline);
+    const overdue = tasks.filter((t) => isLate(t));
+    const assigned = tasks.length;
+    const doneRate = assigned ? done.length / assigned : 1;
+    const onTimeRate = done.length ? doneOnTime.length / done.length : 1;
+    const overdueRate = assigned ? overdue.length / assigned : 0;
+    const projectCount = projects.filter((p) => p.team.includes(emp.id)).length;
+
+    const kpi = clamp(Math.round(doneRate * 55 + onTimeRate * 30 + (1 - overdueRate) * 10 + Math.min(projectCount / 3, 1) * 5), 0, 100);
+    const load = clamp(Math.round((assigned / 8) * 100), 0, 100);
+
+    return { ...emp, kpi, load, assigned, doneCount: done.length };
+  });
+}
+
+function canViewMoney(role) {
+  return role === ROLES.CEO || role === ROLES.MANAGER;
+}
+
+function canViewReports(role) {
+  return role === ROLES.CEO;
+}
+
+export default function AgencyCRM() {
+  const [profiles] = useState(PROFILES);
+  const [activeProfileId, setActiveProfileId] = useState(1);
+
+  const [employees, setEmployees] = useState(INIT_EMPLOYEES);
+  const [projects, setProjects] = useState(INIT_PROJECTS);
+  const [shootings, setShootings] = useState(INIT_SHOOTINGS);
+  const [meetings, setMeetings] = useState(INIT_MEETINGS);
+
+  const [page, setPage] = useState("dashboard");
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState(null);
+
+  const [modal, setModal] = useState(null);
+
+  const [chatOpen, setChatOpen] = useState(true);
+  const [chatInput, setChatInput] = useState("");
+  const [chatMessages, setChatMessages] = useState([
+    { id: uid(), author: "System", text: "Umumiy chat ishga tushdi" },
+  ]);
+
+  const profile = useMemo(() => profiles.find((p) => p.id === activeProfileId) || profiles[0], [profiles, activeProfileId]);
+  const employeeMetrics = useMemo(() => recalcEmployeeMetrics(employees, projects), [employees, projects]);
+
+  const currentProject = useMemo(() => projects.find((p) => p.id === selectedProjectId) || null, [projects, selectedProjectId]);
+  const currentEmployee = useMemo(() => employeeMetrics.find((e) => e.id === selectedEmployeeId) || null, [employeeMetrics, selectedEmployeeId]);
+
+  function upsertProject(next) {
+    setProjects((prev) => prev.map((p) => (p.id === next.id ? next : p)));
+  }
+
+  function removeProject(projectId) {
+    setProjects((prev) => prev.filter((p) => p.id !== projectId));
+    setSelectedProjectId(null);
+  }
+
+  function sendChat() {
+    if (!chatInput.trim()) return;
+    setChatMessages((prev) => [...prev, { id: uid(), author: profile.name, text: chatInput.trim() }]);
+    setChatInput("");
+  }
+
+  const nav = [
+    { id: "dashboard", icon: "⚡", label: "Dashboard" },
+    { id: "projects", icon: "📁", label: "Loyihalar" },
+    { id: "team", icon: "👥", label: "Xodimlar" },
+    { id: "shooting", icon: "🎬", label: "Syomka" },
+    { id: "meetings", icon: "📞", label: "Uchrashuvlar" },
+    { id: "reports", icon: "📊", label: "Hisobotlar" },
+    { id: "workflow", icon: "🔄", label: "Workflow" },
+  ];
+
+  const isCEO = profile.role === ROLES.CEO;
+
+  return (
+    <div style={{ display: "flex", minHeight: "100vh", background: "#f2f2f7", color: "#1d1d1f", fontFamily: "-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Helvetica Neue',Arial,sans-serif" }}>
+      <style>{`
+        *{box-sizing:border-box}
+        body{margin:0;background:#f2f2f7}
+        .card{background:rgba(255,255,255,.9);backdrop-filter:blur(10px);border:1px solid #e5e5ea;border-radius:16px;box-shadow:0 6px 18px rgba(0,0,0,.05)}
+        .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:12px;padding:9px 14px;font-size:13px;font-weight:700;border:1px solid transparent;cursor:pointer}
+        .btn-primary{background:#0a84ff;color:#fff}
+        .btn-secondary{background:#f5f5f7;color:#3a3a3c;border-color:#e5e5ea}
+        .btn-danger{background:#fff1f1;color:#c81e1e;border-color:#ffd8d8}
+        .btn-success{background:#ecfdf5;color:#047857;border-color:#d1fae5}
+        .nav-item{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:11px;color:#6e6e73;font-weight:700;cursor:pointer;font-size:13px}
+        .nav-item:hover{background:#f5f5f7;color:#1d1d1f}
+        .nav-item.active{background:#0a84ff;color:#fff}
+        .table-wrap{overflow-x:auto}
+        .table{width:100%;border-collapse:separate;border-spacing:0;min-width:1100px}
+        .table th{background:#f5f5f7;color:#6e6e73;font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;padding:11px;text-align:left;white-space:nowrap}
+        .table td{padding:10px 11px;border-top:1px solid #ececf0;vertical-align:middle;color:#1d1d1f}
+        .cell-nowrap{white-space:nowrap}
+        .cell-clip{max-width:250px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:700}
+        @media (max-width: 1100px){
+          .grid-4{grid-template-columns:repeat(2,1fr)!important}
+          .grid-3{grid-template-columns:1fr!important}
+          .layout-main{padding:16px!important}
+        }
+      `}</style>
+
+      <aside style={{ width: 246, borderRight: "1px solid #e5e5ea", background: "#fff", padding: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 8 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg,#0a84ff,#5e5ce6)", display: "grid", placeItems: "center", color: "#fff", fontWeight: 900 }}>A</div>
+          <div>
+            <div style={{ fontWeight: 900 }}>Agency CRM</div>
+            <div style={{ color: "#6e6e73", fontSize: 12 }}>Apple style panel</div>
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: 10 }}>
+          <div style={{ fontSize: 12, color: "#6e6e73", marginBottom: 6 }}>Profil</div>
+          <Select value={activeProfileId} onChange={(e) => setActiveProfileId(Number(e.target.value))}>
+            {profiles.map((p) => <option key={p.id} value={p.id}>{p.name} - {p.role}</option>)}
+          </Select>
+        </div>
+
+        <div style={{ display: "grid", gap: 4 }}>
+          {nav.map((n) => {
+            const locked = n.id === "reports" && !canViewReports(profile.role);
+            return (
+              <div
+                key={n.id}
+                className={`nav-item ${page === n.id ? "active" : ""}`}
+                onClick={() => {
+                  if (locked) return;
+                  setPage(n.id);
+                  setSelectedProjectId(null);
+                  setSelectedEmployeeId(null);
+                }}
+                style={{ opacity: locked ? 0.45 : 1 }}
+              >
+                <span>{n.icon}</span>
+                <span>{n.label}{locked ? " (CEO)" : ""}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ marginTop: "auto" }} className="card">
+          <div style={{ padding: 10, display: "flex", gap: 8, alignItems: "center" }}>
+            <Avatar name={profile.name} size={34} />
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 13 }}>{profile.name}</div>
+              <div style={{ color: "#6e6e73", fontSize: 11 }}>{profile.title}</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main className="layout-main" style={{ flex: 1, overflow: "auto", padding: 24, paddingBottom: 128 }}>
+        {page === "dashboard" && (
+          <Dashboard
+            projects={projects}
+            employees={employeeMetrics}
+            meetings={meetings}
+            shootings={shootings}
+            profile={profile}
+            onOpenProject={(id) => {
+              setPage("projects");
+              setSelectedProjectId(id);
+            }}
+          />
+        )}
+
+        {page === "projects" && !currentProject && (
+          <ProjectsPage
+            projects={projects}
+            employees={employeeMetrics}
+            onOpen={(id) => setSelectedProjectId(id)}
+            onAdd={() => setModal({ type: "project-add" })}
+            onEdit={(project) => setModal({ type: "project-edit", payload: project })}
+            onDelete={(id) => removeProject(id)}
+          />
+        )}
+
+        {page === "projects" && currentProject && (
+          <ProjectDetail
+            project={currentProject}
+            employees={employeeMetrics}
+            role={profile.role}
+            onBack={() => setSelectedProjectId(null)}
+            onUpdate={upsertProject}
+            onDeleteProject={() => removeProject(currentProject.id)}
+          />
+        )}
+
+        {page === "team" && !currentEmployee && (
+          <TeamPage
+            employees={employeeMetrics}
+            role={profile.role}
+            projects={projects}
+            onOpen={(id) => setSelectedEmployeeId(id)}
+            onAdd={() => setModal({ type: "employee-add" })}
+            onEdit={(employee) => setModal({ type: "employee-edit", payload: employee })}
+            onDelete={(id) => setEmployees((prev) => prev.filter((e) => e.id !== id))}
+          />
+        )}
+
+        {page === "team" && currentEmployee && (
+          <EmployeeDetail
+            employee={currentEmployee}
+            role={profile.role}
+            projects={projects}
+            onBack={() => setSelectedEmployeeId(null)}
+          />
+        )}
+
+        {page === "shooting" && (
+          <ShootingPage
+            items={shootings}
+            employees={employeeMetrics}
+            projects={projects}
+            onAdd={() => setModal({ type: "shoot-add" })}
+            onEdit={(x) => setModal({ type: "shoot-edit", payload: x })}
+            onDelete={(id) => setShootings((prev) => prev.filter((x) => x.id !== id))}
+          />
+        )}
+
+        {page === "meetings" && (
+          <MeetingsPage
+            items={meetings}
+            employees={employeeMetrics}
+            onAdd={() => setModal({ type: "meeting-add" })}
+            onEdit={(x) => setModal({ type: "meeting-edit", payload: x })}
+            onDelete={(id) => setMeetings((prev) => prev.filter((x) => x.id !== id))}
+          />
+        )}
+
+        {page === "reports" && (
+          canViewReports(profile.role)
+            ? <ReportsPage projects={projects} />
+            : <div className="card" style={{ padding: 24, fontWeight: 700 }}>Bu bo'lim faqat CEO uchun</div>
+        )}
+
+        {page === "workflow" && <WorkflowPage />}
+      </main>
+
+      <CommonChat
+        profile={profile}
+        open={chatOpen}
+        onToggle={() => setChatOpen((v) => !v)}
+        messages={chatMessages}
+        value={chatInput}
+        onChange={setChatInput}
+        onSend={sendChat}
+      />
+
+      {modal?.type === "project-add" && (
+        <ProjectModal
+          title="Yangi loyiha"
+          employees={employeeMetrics}
+          onClose={() => setModal(null)}
+          onSave={(form) => {
+            const manager = toNum(form.manager, employeeMetrics[0]?.id || 1);
+            const next = {
+              id: uid(),
+              name: form.name,
+              client: form.client,
+              type: form.type,
+              start: form.start,
+              end: form.end,
+              manager,
+              team: [manager],
+              status: "Planned",
+              priority: form.priority,
+              tasks: [],
+              plans: { daily: [], weekly: [], monthly: [] },
+              contentPlan: [],
+              mediaplan: [],
+              calls: [],
+              report: { budget: toNum(form.budget), leads: 0, cpl: 0, sales: 0, roi: 0 },
+            };
+            setProjects((prev) => [next, ...prev]);
+            setModal(null);
+          }}
+        />
+      )}
+
+      {modal?.type === "project-edit" && (
+        <ProjectModal
+          title="Loyihani tahrirlash"
+          employees={employeeMetrics}
+          initial={modal.payload}
+          onClose={() => setModal(null)}
+          onSave={(form) => {
+            setProjects((prev) => prev.map((p) => p.id === modal.payload.id ? {
+              ...p,
+              name: form.name,
+              client: form.client,
+              type: form.type,
+              start: form.start,
+              end: form.end,
+              manager: toNum(form.manager, p.manager),
+              priority: form.priority,
+              report: { ...p.report, budget: toNum(form.budget, p.report.budget) },
+            } : p));
+            setModal(null);
+          }}
+        />
+      )}
+
+      {(modal?.type === "employee-add" || modal?.type === "employee-edit") && (
+        <EmployeeModal
+          title={modal.type === "employee-add" ? "Yangi xodim" : "Xodimni tahrirlash"}
+          initial={modal.payload}
+          onClose={() => setModal(null)}
+          onSave={(form) => {
+            if (modal.type === "employee-add") {
+              setEmployees((prev) => [...prev, { id: uid(), name: form.name, role: form.role, dept: form.dept, salary: toNum(form.salary) }]);
+            } else {
+              setEmployees((prev) => prev.map((e) => e.id === modal.payload.id ? { ...e, name: form.name, role: form.role, dept: form.dept, salary: toNum(form.salary, e.salary) } : e));
+            }
+            setModal(null);
+          }}
+        />
+      )}
+
+      {(modal?.type === "shoot-add" || modal?.type === "shoot-edit") && (
+        <ShootingModal
+          title={modal.type === "shoot-add" ? "Yangi syomka" : "Syomkani tahrirlash"}
+          projects={projects}
+          employees={employeeMetrics}
+          initial={modal.payload}
+          onClose={() => setModal(null)}
+          onSave={(form) => {
+            const payload = {
+              id: modal.type === "shoot-add" ? uid() : modal.payload.id,
+              date: form.date,
+              project: toNum(form.project),
+              type: form.type,
+              location: form.location,
+              operator: toNum(form.operator),
+              goal: form.goal,
+              status: form.status,
+            };
+            if (modal.type === "shoot-add") setShootings((prev) => [payload, ...prev]);
+            else setShootings((prev) => prev.map((s) => s.id === payload.id ? payload : s));
+            setModal(null);
+          }}
+        />
+      )}
+
+      {(modal?.type === "meeting-add" || modal?.type === "meeting-edit") && (
+        <MeetingModal
+          title={modal.type === "meeting-add" ? "Yangi uchrashuv/qong'iroq" : "Yozuvni tahrirlash"}
+          employees={employeeMetrics}
+          initial={modal.payload}
+          onClose={() => setModal(null)}
+          onSave={(form) => {
+            const payload = {
+              id: modal.type === "meeting-add" ? uid() : modal.payload.id,
+              client: form.client,
+              date: form.date,
+              type: form.type,
+              who: toNum(form.who),
+              result: form.result,
+              next: form.next,
+            };
+            if (modal.type === "meeting-add") setMeetings((prev) => [payload, ...prev]);
+            else setMeetings((prev) => prev.map((m) => m.id === payload.id ? payload : m));
+            setModal(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function Dashboard({ projects, employees, meetings, shootings, profile, onOpenProject }) {
+  const totalTasks = projects.flatMap((p) => p.tasks).length;
+  const doneTasks = projects.flatMap((p) => p.tasks).filter((t) => t.status === "Done").length;
+  const activeProjects = projects.filter((p) => p.status !== "Done").length;
+
+  const weeklyContent = projects
+    .flatMap((p) => p.contentPlan.map((c) => ({ ...c, projectName: p.name })))
+    .slice(0, 5);
+
+  const activeTasks = projects
+    .flatMap((p) => p.tasks.filter((t) => t.status !== "Done").map((t) => ({ ...t, projectName: p.name })))
+    .slice(0, 5);
+
+  return (
+    <div style={{ display: "grid", gap: 14, maxWidth: 1400, margin: "0 auto" }}>
+      <div style={{ textAlign: "center" }}>
+        <h1 style={{ margin: 0, fontSize: 56, letterSpacing: "-0.03em" }}>Bosh boshqaruv paneli</h1>
+        <div style={{ color: "#60738f", marginTop: 4, fontSize: 18 }}>Barcha jarayonlar bir ko'rinishda</div>
+      </div>
+
+      <div className="grid-4" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+        <DashStatCard title="Jami loyihalar" value={projects.length} sub={`${activeProjects} faol`} icon="📁" color="#5e5ce6" />
+        <DashStatCard title="Jami topshiriqlar" value={totalTasks} sub={`${doneTasks} bajarildi`} icon="✅" color="#18b981" />
+        <DashStatCard title="Xodimlar" value={employees.length} sub="5 bo'lim" icon="👥" color="#1f9cf0" />
+        <DashStatCard title="Bu hafta meetings" value={meetings.length} sub={`${meetings.filter((m) => m.type === "Call").length} qo'ng'iroq`} icon="📞" color="#f97316" />
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }} className="grid-3">
+        <div className="card" style={{ padding: 14 }}>
+          <div style={{ textAlign: "center", fontWeight: 900, fontSize: 20, marginBottom: 8 }}>Loyihalar progressi</div>
+          <div style={{ display: "grid", gap: 10 }}>
+            {projects.map((p) => {
+              const pct = progressCalc(p);
+              const manager = getEmployee(p.manager, employees);
+              const color = pct >= 50 ? "#5e5ce6" : "#f97316";
+              return (
+                <div key={p.id} style={{ display: "grid", gridTemplateColumns: "92px 1fr auto auto", gap: 12, alignItems: "center", border: "1px solid #ececf0", borderRadius: 14, padding: 10, cursor: "pointer" }} onClick={() => onOpenProject(p.id)}>
+                  <div style={{ position: "relative", width: 72, height: 72, marginLeft: 6 }}>
+                    <svg width="72" height="72" style={{ transform: "rotate(-90deg)" }}>
+                      <circle cx="36" cy="36" r="30" fill="none" stroke="#e6eaf2" strokeWidth="7" />
+                      <circle cx="36" cy="36" r="30" fill="none" stroke={color} strokeWidth="7" strokeLinecap="round" strokeDasharray={`${(2 * Math.PI * 30 * pct) / 100} ${2 * Math.PI * 30}`} />
+                    </svg>
+                    <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", fontSize: 16, fontWeight: 900, color }}>{pct}%</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 22, fontWeight: 900 }}>{p.name}</div>
+                    <div style={{ color: "#60738f", fontSize: 14 }}>{p.client} · {p.type}</div>
+                    <div style={{ marginTop: 10, height: 8, background: "#e7ecf3", borderRadius: 999, overflow: "hidden", maxWidth: 440 }}>
+                      <div style={{ width: `${pct}%`, height: "100%", background: color }} />
+                    </div>
+                  </div>
+                  <div style={{ fontWeight: 800, fontSize: 18 }}>{p.priority}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                    {manager && <Avatar name={manager.name} size={28} />}
+                    <span style={{ color: "#60738f", fontSize: 13 }}>{manager?.name || "-"}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gap: 12 }}>
+          <div className="card" style={{ padding: 14 }}>
+            <div style={{ fontWeight: 900, fontSize: 20, marginBottom: 8 }}>📅 Uchrashuvlar</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {meetings.slice(0, 3).map((m) => (
+                <div key={m.id} style={{ display: "grid", gridTemplateColumns: "46px 1fr", gap: 8, alignItems: "start" }}>
+                  <div style={{ width: 46, height: 46, borderRadius: 12, background: "#dbeafe", display: "grid", placeItems: "center", fontSize: 22 }}>{m.type === "Call" ? "📞" : "🤝"}</div>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 19 }}>{m.client}</div>
+                    <div style={{ color: "#9aacbf", fontSize: 15 }}>{m.date} · {m.type}</div>
+                    {m.next ? <div style={{ color: "#5e5ce6", marginTop: 2, fontSize: 14 }}>→ {m.next}</div> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: 14 }}>
+            <div style={{ fontWeight: 900, fontSize: 20, marginBottom: 8 }}>🎬 Syomkalar</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {shootings.slice(0, 2).map((s) => (
+                <div key={s.id} style={{ display: "grid", gridTemplateColumns: "46px 1fr", gap: 8, alignItems: "start" }}>
+                  <div style={{ width: 46, height: 46, borderRadius: 12, background: "#fef3c7", display: "grid", placeItems: "center", fontSize: 22 }}>🎥</div>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 19 }}>{projects.find((p) => p.id === s.project)?.name || "-"}</div>
+                    <div style={{ color: "#9aacbf", fontSize: 15 }}>{s.date} · {s.location}</div>
+                    <div style={{ marginTop: 4 }}><StatusPill status={s.status} /></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: 14 }}>
+            <div style={{ fontWeight: 900, fontSize: 20, marginBottom: 8 }}>👥 Xodim yuklamasi</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {employees.slice(0, 4).map((e) => (
+                <div key={e.id}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                    <span style={{ fontWeight: 800, fontSize: 15 }}>{e.name.split(" ")[0]}</span>
+                    <span style={{ color: "#60738f", fontSize: 14 }}>{e.load}%</span>
+                  </div>
+                  <div style={{ height: 8, background: "#e7ecf3", borderRadius: 999, overflow: "hidden" }}>
+                    <div style={{ width: `${e.load}%`, height: "100%", background: e.load >= 80 ? "#f97316" : "#5e5ce6" }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }} className="grid-3">
+        <div className="card" style={{ padding: 14 }}>
+          <div style={{ fontWeight: 900, fontSize: 22, marginBottom: 8 }}>📅 SMM Kontent (bu hafta)</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {weeklyContent.map((c) => (
+              <div key={c.id} style={{ display: "grid", gridTemplateColumns: "56px 1fr auto", gap: 10, alignItems: "center" }}>
+                <div style={{ width: 56, height: 56, borderRadius: 14, background: "#e8edf8", display: "grid", placeItems: "center", fontSize: 25 }}>{c.mediaReady ? "📸" : "📱"}</div>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 20 }}>{c.topic}</div>
+                  <div style={{ color: "#9aacbf", fontSize: 14 }}>{c.date} · {c.platform} · {c.format}</div>
+                </div>
+                <StatusPill status={c.status} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: 14 }}>
+          <div style={{ fontWeight: 900, fontSize: 22, marginBottom: 8 }}>⚡ Faol topshiriqlar</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {activeTasks.map((t) => {
+              const owner = getEmployee(t.owner, employees);
+              return (
+                <div key={t.id} style={{ display: "grid", gridTemplateColumns: "16px 1fr auto", gap: 8, alignItems: "center" }}>
+                  <div style={{ width: 16, height: 16, borderRadius: "50%", background: "#3b82f6" }} />
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 20 }}>{t.name}</div>
+                    <div style={{ color: "#9aacbf", fontSize: 14 }}>{t.projectName} · deadline: {t.deadline}</div>
+                  </div>
+                  {owner && <Avatar name={owner.name} size={42} />}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DashStatCard({ title, value, sub, icon, color }) {
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "64px 1fr", gap: 10, alignItems: "center" }}>
+        <div style={{ width: 64, height: 64, borderRadius: 18, background: `${color}18`, display: "grid", placeItems: "center", fontSize: 30 }}>{icon}</div>
+        <div>
+          <div style={{ fontSize: 48, fontWeight: 900, color, lineHeight: 1 }}>{value}</div>
+          <div style={{ fontSize: 18, color: "#60738f", marginTop: 2 }}>{title}</div>
+          <div style={{ fontSize: 14, color, marginTop: 2, fontWeight: 700 }}>{sub}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProjectsPage({ projects, employees, onOpen, onAdd, onEdit, onDelete }) {
+  return (
+    <div style={{ display: "grid", gap: 14, maxWidth: 1320 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <h2 style={{ margin: 0, fontSize: 40, letterSpacing: "-0.02em" }}>Loyihalar</h2>
+        <button className="btn btn-primary" onClick={onAdd}>+ Yangi loyiha</button>
+      </div>
+
+      <div className="grid-3" style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(420px,1fr))", gap: 14 }}>
+        {projects.map((p) => {
+          const done = p.tasks.filter((x) => x.status === "Done").length;
+          const pct = progressCalc(p);
+          const manager = getEmployee(p.manager, employees);
+          return (
+            <div key={p.id} className="card" style={{ padding: 18, display: "grid", gap: 12, cursor: "pointer", minHeight: 390 }} onClick={() => onOpen(p.id)}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10 }}>
+                <div>
+                  <div style={{ fontWeight: 900, fontSize: 22, letterSpacing: "-0.02em", lineHeight: 1.15 }}>{p.name}</div>
+                  <div style={{ color: "#6e6e73", fontSize: 16, marginTop: 4 }}>{p.client}</div>
+                </div>
+                <StatusPill status={p.status} />
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "center", margin: "2px 0" }}>
+                <CircleProgress pct={pct} done={done} total={p.tasks.length} />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  {manager && <Avatar name={manager.name} size={30} />}
+                  <span style={{ fontSize: 16, color: "#4b5563", fontWeight: 700 }}>{manager?.name || "-"}</span>
+                </div>
+                <span style={{ fontSize: 16, color: "#6e6e73", whiteSpace: "nowrap", textAlign: "right" }}>{p.start} → {p.end}</span>
+              </div>
+
+              <div style={{ display: "grid", gap: 8, marginTop: 2 }}>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn btn-secondary" style={{ minWidth: 110 }} onClick={(e) => { e.stopPropagation(); onOpen(p.id); }}>Ochish</button>
+                  <button className="btn btn-secondary" style={{ minWidth: 128 }} onClick={(e) => { e.stopPropagation(); onEdit(p); }}>Tahrirlash</button>
+                </div>
+                <div>
+                  <button className="btn btn-danger" style={{ minWidth: 132 }} onClick={(e) => { e.stopPropagation(); onDelete(p.id); }}>O'chirish</button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ProjectDetail({ project, employees, role, onBack, onUpdate, onDeleteProject }) {
+  const [tab, setTab] = useState("content");
+  const [modal, setModal] = useState(null);
+
+  const done = project.tasks.filter((x) => x.status === "Done").length;
+  const pct = progressCalc(project);
+  const manager = getEmployee(project.manager, employees);
+
+  function mutate(updater) {
+    onUpdate(updater(project));
+  }
+
+  function updateTask(taskId, patch) {
+    mutate((p) => ({ ...p, tasks: p.tasks.map((t) => t.id === taskId ? { ...t, ...patch } : t) }));
+  }
+
+  function deleteTask(taskId) {
+    mutate((p) => ({
+      ...p,
+      tasks: p.tasks.filter((t) => t.id !== taskId),
+      plans: {
+        daily: p.plans.daily.filter((x) => x.taskId !== taskId),
+        weekly: p.plans.weekly.filter((x) => x.taskId !== taskId),
+        monthly: p.plans.monthly.filter((x) => x.taskId !== taskId),
+      },
+    }));
+  }
+
+  function addTask(form) {
+    mutate((p) => {
+      const task = {
+        id: uid(),
+        name: form.name,
+        owner: toNum(form.owner),
+        start: form.start,
+        deadline: form.deadline,
+        status: form.status,
+        doneDate: form.status === "Done" ? nowDate() : "",
+        note: form.note,
+      };
+      return {
+        ...p,
+        tasks: [...p.tasks, task],
+        plans: {
+          daily: [...p.plans.daily, { id: uid(), title: task.name, taskId: task.id, owner: task.owner, period: task.start || nowDate(), status: "Planned", note: "" }],
+          weekly: [...p.plans.weekly, { id: uid(), title: task.name, taskId: task.id, owner: task.owner, period: "W", status: "Planned", note: "" }],
+          monthly: [...p.plans.monthly, { id: uid(), title: task.name, taskId: task.id, owner: task.owner, period: task.start?.slice(0, 7) || nowDate().slice(0, 7), status: "Planned", note: "" }],
+        },
+      };
+    });
+  }
+
+  function addContent(form) {
+    mutate((p) => ({
+      ...p,
+      contentPlan: [...p.contentPlan, { id: uid(), ...form, owner: toNum(form.owner), mediaReady: Boolean(form.mediaReady) }],
+    }));
+  }
+
+  function updateContent(id, patch) {
+    mutate((p) => ({ ...p, contentPlan: p.contentPlan.map((x) => x.id === id ? { ...x, ...patch } : x) }));
+  }
+
+  function removeContent(id) {
+    mutate((p) => ({ ...p, contentPlan: p.contentPlan.filter((x) => x.id !== id) }));
+  }
+
+  function addMedia(form) {
+    mutate((p) => ({ ...p, mediaplan: [...p.mediaplan, { id: uid(), ...form, owner: toNum(form.owner), budget: toNum(form.budget) }] }));
+  }
+
+  function updateMedia(id, patch) {
+    mutate((p) => ({ ...p, mediaplan: p.mediaplan.map((m) => m.id === id ? { ...m, ...patch, budget: patch.budget !== undefined ? toNum(patch.budget) : m.budget } : m) }));
+  }
+
+  function removeMedia(id) {
+    mutate((p) => ({ ...p, mediaplan: p.mediaplan.filter((m) => m.id !== id) }));
+  }
+
+  function addCall(form) {
+    mutate((p) => ({ ...p, calls: [...p.calls, { id: uid(), ...form, who: toNum(form.who) }] }));
+  }
+
+  function updateCall(id, patch) {
+    mutate((p) => ({ ...p, calls: p.calls.map((c) => c.id === id ? { ...c, ...patch, who: patch.who !== undefined ? toNum(patch.who) : c.who } : c) }));
+  }
+
+  function removeCall(id) {
+    mutate((p) => ({ ...p, calls: p.calls.filter((c) => c.id !== id) }));
+  }
+
+  function addPlan(scope, form) {
+    mutate((p) => ({ ...p, plans: { ...p.plans, [scope]: [...p.plans[scope], { id: uid(), ...form, taskId: form.taskId ? toNum(form.taskId) : null, owner: form.owner ? toNum(form.owner) : null }] } }));
+  }
+
+  function updatePlan(scope, id, patch) {
+    mutate((p) => ({ ...p, plans: { ...p.plans, [scope]: p.plans[scope].map((x) => x.id === id ? { ...x, ...patch } : x) } }));
+  }
+
+  function removePlan(scope, id) {
+    mutate((p) => ({ ...p, plans: { ...p.plans, [scope]: p.plans[scope].filter((x) => x.id !== id) } }));
+  }
+
+  const tabs = [
+    { id: "content", label: "Kontent reja" },
+    { id: "tasks", label: "Topshiriqlar" },
+    { id: "plans", label: "Kun/Hafta/Oy" },
+    { id: "mediaplan", label: "Mediaplan" },
+    { id: "calls", label: "Aloqalar" },
+    { id: "report", label: "Hisobot" },
+  ];
+
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ display: "flex", justifyContent: "center" }}>
+        <button className="btn btn-secondary" onClick={onBack}>← Orqaga</button>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button className="btn btn-secondary" onClick={() => setModal({ type: "project-edit", payload: project })}>Loyihani tahrirlash</button>
+        <button className="btn btn-danger" onClick={onDeleteProject}>Loyihani o'chirish</button>
+      </div>
+
+      <div className="card" style={{ padding: 18 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 16, alignItems: "center" }}>
+          <CircleProgress pct={pct} done={done} total={project.tasks.length} />
+          <div>
+            <div style={{ fontSize: 46, fontWeight: 900, letterSpacing: "-0.02em" }}>{project.name}</div>
+            <div style={{ color: "#6e6e73", fontSize: 18 }}>{project.client} · {project.type}</div>
+            <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <StatusPill status={project.status} />
+              <span className="chip" style={{ background: "#f2f2f7", color: "#3a3a3c", fontSize: 15 }}>{project.priority}</span>
+              <span className="chip" style={{ background: "#f2f2f7", color: "#3a3a3c", fontSize: 15 }}>📅 {project.start} → {project.end}</span>
+            </div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 16, color: "#6e6e73" }}>Javobgar manager</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", marginTop: 6 }}>
+              {manager && <Avatar name={manager.name} size={42} />}
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 22 }}>{manager?.name || "-"}</div>
+                <div style={{ color: "#6e6e73", fontSize: 16 }}>{manager?.role || ""}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", border: "1px solid #e5e5ea", borderRadius: 12, padding: 4, background: "#f5f5f7" }}>
+        {tabs.map((t) => (
+          <button key={t.id} className="btn" style={{ background: tab === t.id ? "#fff" : "transparent", color: tab === t.id ? "#0a84ff" : "#3a3a3c", border: "1px solid transparent", padding: "8px 12px" }} onClick={() => setTab(t.id)}>{t.label}</button>
+        ))}
+      </div>
+
+      {tab === "content" && (
+        <ContentPlanSection
+          rows={project.contentPlan}
+          employees={employees}
+          onAdd={() => setModal({ type: "content-add" })}
+          onEdit={(row) => setModal({ type: "content-edit", payload: row })}
+          onDelete={removeContent}
+          onQuickStatus={(id, status) => updateContent(id, { status })}
+        />
+      )}
+
+      {tab === "tasks" && (
+        <TasksSection
+          rows={project.tasks}
+          plans={project.plans}
+          employees={employees}
+          onAdd={() => setModal({ type: "task-add" })}
+          onEdit={(task) => setModal({ type: "task-edit", payload: task })}
+          onDelete={deleteTask}
+          onChangeStatus={(taskId, status) => updateTask(taskId, { status, doneDate: status === "Done" ? nowDate() : "" })}
+          onTogglePlan={(task, scope) => {
+            const bucket = project.plans[scope];
+            const found = bucket.find((x) => x.taskId === task.id);
+            if (found) removePlan(scope, found.id);
+            else addPlan(scope, { title: task.name, taskId: task.id, owner: task.owner, period: scope === "daily" ? task.start : scope === "weekly" ? "W" : task.start.slice(0, 7), status: "Planned", note: "" });
+          }}
+        />
+      )}
+
+      {tab === "plans" && (
+        <PlansSection
+          plans={project.plans}
+          tasks={project.tasks}
+          employees={employees}
+          onAdd={addPlan}
+          onEdit={updatePlan}
+          onDelete={removePlan}
+        />
+      )}
+
+      {tab === "mediaplan" && (
+        <MediaPlanSection
+          rows={project.mediaplan}
+          employees={employees}
+          role={role}
+          onAdd={() => setModal({ type: "media-add" })}
+          onEdit={(m) => setModal({ type: "media-edit", payload: m })}
+          onDelete={removeMedia}
+        />
+      )}
+
+      {tab === "calls" && (
+        <CallsSection
+          rows={project.calls}
+          employees={employees}
+          onAdd={() => setModal({ type: "call-add" })}
+          onEdit={(c) => setModal({ type: "call-edit", payload: c })}
+          onDelete={removeCall}
+        />
+      )}
+
+      {tab === "report" && (
+        <ProjectReportSection report={project.report} role={role} progress={pct} />
+      )}
+
+      {modal?.type === "task-add" && (
+        <TaskModal employees={employees} onClose={() => setModal(null)} onSave={(f) => { addTask(f); setModal(null); }} />
+      )}
+      {modal?.type === "task-edit" && (
+        <TaskModal initial={modal.payload} employees={employees} onClose={() => setModal(null)} onSave={(f) => {
+          updateTask(modal.payload.id, { ...f, owner: toNum(f.owner), doneDate: f.status === "Done" ? (modal.payload.doneDate || nowDate()) : "" });
+          setModal(null);
+        }} />
+      )}
+
+      {modal?.type === "content-add" && (
+        <ContentModal employees={employees} onClose={() => setModal(null)} onSave={(f) => { addContent(f); setModal(null); }} />
+      )}
+      {modal?.type === "content-edit" && (
+        <ContentModal initial={modal.payload} employees={employees} onClose={() => setModal(null)} onSave={(f) => { updateContent(modal.payload.id, { ...f, owner: toNum(f.owner) }); setModal(null); }} />
+      )}
+
+      {modal?.type === "media-add" && (
+        <MediaModal employees={employees} onClose={() => setModal(null)} onSave={(f) => { addMedia(f); setModal(null); }} />
+      )}
+      {modal?.type === "media-edit" && (
+        <MediaModal initial={modal.payload} employees={employees} onClose={() => setModal(null)} onSave={(f) => { updateMedia(modal.payload.id, f); setModal(null); }} />
+      )}
+
+      {modal?.type === "call-add" && (
+        <CallModal employees={employees} onClose={() => setModal(null)} onSave={(f) => { addCall(f); setModal(null); }} />
+      )}
+      {modal?.type === "call-edit" && (
+        <CallModal initial={modal.payload} employees={employees} onClose={() => setModal(null)} onSave={(f) => { updateCall(modal.payload.id, f); setModal(null); }} />
+      )}
+
+      {modal?.type === "project-edit" && (
+        <Modal title="Loyiha sozlamasi" onClose={() => setModal(null)}>
+          <div style={{ display: "grid", gap: 10 }}>
+            <div style={{ fontWeight: 700 }}>Loyihani asosiy ro'yxat orqali tahrirlash mumkin.</div>
+            <button className="btn btn-secondary" onClick={() => setModal(null)}>Yopish</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function ContentPlanSection({ rows, employees, onAdd, onEdit, onDelete, onQuickStatus }) {
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 24, letterSpacing: "-0.01em" }}>SMM Kontent Kalendar</h3>
+        <button className="btn btn-primary" onClick={onAdd}>+ Kontent qo'shish</button>
+      </div>
+
+      <div className="table-wrap">
+        <table className="table" style={{ minWidth: 1240 }}>
+          <thead>
+            <tr>
+              <th>Sana</th>
+              <th>Platforma</th>
+              <th>Tur</th>
+              <th>Mavzu</th>
+              <th>Mas'ul</th>
+              <th>Status</th>
+              <th>Media</th>
+              <th>Amallar</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => {
+              const owner = getEmployee(c.owner, employees);
+              const col = PLATFORM_COLORS[c.platform] || "#0a84ff";
+              return (
+                <tr key={c.id}>
+                  <td className="cell-nowrap" style={{ fontWeight: 800 }}>{c.date}</td>
+                  <td>
+                    <span className="chip" style={{ background: `${col}1a`, color: col }}>{c.platform}</span>
+                  </td>
+                  <td className="cell-nowrap">{c.format}</td>
+                  <td className="cell-clip" title={c.topic}>{c.topic}</td>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {owner && <Avatar name={owner.name} size={24} />}
+                      <span className="cell-nowrap">{owner?.name || "-"}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <StatusPill status={c.status} />
+                  </td>
+                  <td className="cell-nowrap" style={{ fontSize: 22 }}>{c.mediaReady ? "✅" : "⏳"}</td>
+                  <td>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "nowrap", whiteSpace: "nowrap" }}>
+                      <button className="btn btn-secondary" style={{ padding: "6px 10px" }} onClick={() => onQuickStatus(c.id, c.status === "Done" ? "In Progress" : "Done")}>{c.status === "Done" ? "Qaytar" : "Done"}</button>
+                      <button className="btn btn-secondary" style={{ padding: "6px 10px" }} onClick={() => onEdit(c)}>Edit</button>
+                      <button className="btn btn-danger" style={{ padding: "6px 10px" }} onClick={() => onDelete(c.id)}>Delete</button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {rows.length === 0 && (
+              <tr><td colSpan={8} style={{ textAlign: "center", color: "#6e6e73", padding: 20 }}>Kontent yo'q</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TasksSection({ rows, plans, employees, onAdd, onEdit, onDelete, onChangeStatus, onTogglePlan }) {
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <h3 style={{ margin: 0 }}>Topshiriqlar</h3>
+        <button className="btn btn-primary" onClick={onAdd}>+ Task qo'shish</button>
+      </div>
+
+      <div className="table-wrap">
+        <table className="table" style={{ minWidth: 1380 }}>
+          <thead>
+            <tr>
+              <th>Task</th>
+              <th>Mas'ul</th>
+              <th>Boshlanish</th>
+              <th>Deadline</th>
+              <th>Status</th>
+              <th>Izoh</th>
+              <th>Kunlik</th>
+              <th>Haftalik</th>
+              <th>Oylik</th>
+              <th>Amallar</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((t) => {
+              const owner = getEmployee(t.owner, employees);
+              const hasDaily = plans.daily.some((x) => x.taskId === t.id);
+              const hasWeekly = plans.weekly.some((x) => x.taskId === t.id);
+              const hasMonthly = plans.monthly.some((x) => x.taskId === t.id);
+              return (
+                <tr key={t.id}>
+                  <td className="cell-clip" title={t.name} style={{ fontWeight: 700 }}>{t.name}</td>
+                  <td>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      {owner && <Avatar name={owner.name} size={24} />}
+                      <span>{owner?.name || "-"}</span>
+                    </div>
+                  </td>
+                  <td className="cell-nowrap">{t.start}</td>
+                  <td className="cell-nowrap" style={{ color: isLate(t) ? "#c81e1e" : "#1d1d1f", fontWeight: 700 }}>{t.deadline}</td>
+                  <td>
+                    <Select value={t.status} onChange={(e) => onChangeStatus(t.id, e.target.value)} style={{ padding: "6px 8px", fontSize: 12 }}>
+                      <option>Planned</option>
+                      <option>In Progress</option>
+                      <option>Done</option>
+                      <option>Review</option>
+                    </Select>
+                  </td>
+                  <td className="cell-clip" title={t.note}>{t.note || "-"}</td>
+                  <td><button className="btn btn-secondary" style={{ padding: "6px 10px", color: hasDaily ? "#047857" : "#3a3a3c" }} onClick={() => onTogglePlan(t, "daily")}>{hasDaily ? "Ulangan" : "Ulash"}</button></td>
+                  <td><button className="btn btn-secondary" style={{ padding: "6px 10px", color: hasWeekly ? "#047857" : "#3a3a3c" }} onClick={() => onTogglePlan(t, "weekly")}>{hasWeekly ? "Ulangan" : "Ulash"}</button></td>
+                  <td><button className="btn btn-secondary" style={{ padding: "6px 10px", color: hasMonthly ? "#047857" : "#3a3a3c" }} onClick={() => onTogglePlan(t, "monthly")}>{hasMonthly ? "Ulangan" : "Ulash"}</button></td>
+                  <td>
+                    <div style={{ display: "flex", gap: 6, whiteSpace: "nowrap" }}>
+                      <button className="btn btn-secondary" style={{ padding: "6px 10px" }} onClick={() => onEdit(t)}>Edit</button>
+                      <button className="btn btn-danger" style={{ padding: "6px 10px" }} onClick={() => onDelete(t.id)}>Delete</button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function PlansSection({ plans, tasks, employees, onAdd, onEdit, onDelete }) {
+  const [scope, setScope] = useState("daily");
+  const [form, setForm] = useState({ title: "", period: "", taskId: "", owner: "", status: "Planned", note: "" });
+
+  const list = plans[scope];
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div className="card" style={{ padding: 14 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          {PLAN_SCOPES.map((s) => <button key={s} className="btn" style={{ background: s === scope ? "#0a84ff" : "#f5f5f7", color: s === scope ? "#fff" : "#3a3a3c" }} onClick={() => setScope(s)}>{PLAN_LABEL[s]}</button>)}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 2fr auto", gap: 8 }}>
+          <Field label="Reja nomi"><Input value={form.title} onChange={(e) => setForm((v) => ({ ...v, title: e.target.value }))} /></Field>
+          <Field label="Period"><Input value={form.period} onChange={(e) => setForm((v) => ({ ...v, period: e.target.value }))} placeholder={scope === "daily" ? "2026-03-10" : scope === "weekly" ? "2026-W11" : "2026-03"} /></Field>
+          <Field label="Task"><Select value={form.taskId} onChange={(e) => setForm((v) => ({ ...v, taskId: e.target.value }))}><option value="">Bog'lanmagan</option>{tasks.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</Select></Field>
+          <Field label="Mas'ul"><Select value={form.owner} onChange={(e) => setForm((v) => ({ ...v, owner: e.target.value }))}><option value="">Tanlanmagan</option>{employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
+          <Field label="Izoh"><Input value={form.note} onChange={(e) => setForm((v) => ({ ...v, note: e.target.value }))} /></Field>
+          <div style={{ display: "flex", alignItems: "end" }}><button className="btn btn-primary" onClick={() => {
+            if (!form.title || !form.period) return;
+            onAdd(scope, form);
+            setForm({ title: "", period: "", taskId: "", owner: "", status: "Planned", note: "" });
+          }}>Qo'shish</button></div>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 14 }}>
+        <div className="table-wrap">
+          <table className="table" style={{ minWidth: 1100 }}>
+            <thead>
+              <tr><th>Nomi</th><th>Period</th><th>Task</th><th>Mas'ul</th><th>Status</th><th>Izoh</th><th>Amallar</th></tr>
+            </thead>
+            <tbody>
+              {list.map((item) => {
+                const task = tasks.find((t) => t.id === item.taskId);
+                const owner = employees.find((e) => e.id === item.owner);
+                return (
+                  <tr key={item.id}>
+                    <td className="cell-clip" title={item.title}>{item.title}</td>
+                    <td className="cell-nowrap">{item.period}</td>
+                    <td className="cell-clip" title={task?.name || "-"}>{task?.name || "-"}</td>
+                    <td>{owner?.name || "-"}</td>
+                    <td>
+                      <Select value={item.status} onChange={(e) => onEdit(scope, item.id, { status: e.target.value })} style={{ padding: "6px 8px", fontSize: 12 }}>
+                        <option>Planned</option><option>In Progress</option><option>Done</option>
+                      </Select>
+                    </td>
+                    <td className="cell-clip" title={item.note}>{item.note || "-"}</td>
+                    <td><button className="btn btn-danger" style={{ padding: "6px 10px" }} onClick={() => onDelete(scope, item.id)}>Delete</button></td>
+                  </tr>
+                );
+              })}
+              {list.length === 0 && <tr><td colSpan={7} style={{ textAlign: "center", color: "#6e6e73" }}>Reja yo'q</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MediaPlanSection({ rows, employees, role, onAdd, onEdit, onDelete }) {
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <h3 style={{ margin: 0 }}>Mediaplan</h3>
+        <button className="btn btn-primary" onClick={onAdd}>+ Mediaplan qo'shish</button>
+      </div>
+      <div className="table-wrap">
+        <table className="table" style={{ minWidth: 1000 }}>
+          <thead>
+            <tr><th>Sana</th><th>Platforma</th><th>Tur</th><th>Mas'ul</th>{canViewMoney(role) && <th>Byudjet</th>}<th>Status</th><th>Izoh</th><th>Amallar</th></tr>
+          </thead>
+          <tbody>
+            {rows.map((m) => (
+              <tr key={m.id}>
+                <td className="cell-nowrap">{m.date}</td>
+                <td className="cell-nowrap">{m.platform}</td>
+                <td>{m.type}</td>
+                <td>{getEmployee(m.owner, employees)?.name || "-"}</td>
+                {canViewMoney(role) && <td className="cell-nowrap">{fmtMoney(m.budget)}</td>}
+                <td><StatusPill status={m.status} /></td>
+                <td className="cell-clip" title={m.note}>{m.note || "-"}</td>
+                <td>
+                  <div style={{ display: "flex", gap: 6, whiteSpace: "nowrap" }}>
+                    <button className="btn btn-secondary" style={{ padding: "6px 10px" }} onClick={() => onEdit(m)}>Edit</button>
+                    <button className="btn btn-danger" style={{ padding: "6px 10px" }} onClick={() => onDelete(m.id)}>Delete</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {rows.length === 0 && <tr><td colSpan={8} style={{ textAlign: "center", color: "#6e6e73" }}>Mediaplan yo'q</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function CallsSection({ rows, employees, onAdd, onEdit, onDelete }) {
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <h3 style={{ margin: 0 }}>Aloqalar</h3>
+        <button className="btn btn-primary" onClick={onAdd}>+ Yozuv qo'shish</button>
+      </div>
+      <div className="table-wrap">
+        <table className="table" style={{ minWidth: 980 }}>
+          <thead>
+            <tr><th>Sana</th><th>Tur</th><th>Kim</th><th>Natija</th><th>Keyingi qadam</th><th>Amallar</th></tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => (
+              <tr key={c.id}>
+                <td className="cell-nowrap">{c.date}</td>
+                <td className="cell-nowrap">{c.type}</td>
+                <td>{getEmployee(c.who, employees)?.name || "-"}</td>
+                <td className="cell-clip" title={c.result}>{c.result || "-"}</td>
+                <td className="cell-clip" title={c.next}>{c.next || "-"}</td>
+                <td>
+                  <div style={{ display: "flex", gap: 6, whiteSpace: "nowrap" }}>
+                    <button className="btn btn-secondary" style={{ padding: "6px 10px" }} onClick={() => onEdit(c)}>Edit</button>
+                    <button className="btn btn-danger" style={{ padding: "6px 10px" }} onClick={() => onDelete(c.id)}>Delete</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {rows.length === 0 && <tr><td colSpan={6} style={{ textAlign: "center", color: "#6e6e73" }}>Aloqalar yo'q</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ProjectReportSection({ report, role, progress }) {
+  if (!canViewMoney(role)) {
+    return <div className="card" style={{ padding: 18, color: "#6e6e73", fontWeight: 700 }}>Moliyaviy ma'lumotlar xodimlar uchun yopiq.</div>;
+  }
+  return (
+    <div className="grid-4" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+      <div className="card" style={{ padding: 16 }}><div style={{ color: "#6e6e73" }}>Byudjet</div><div style={{ fontSize: 26, fontWeight: 900, color: "#5e5ce6" }}>{fmtMoney(report.budget)}</div></div>
+      <div className="card" style={{ padding: 16 }}><div style={{ color: "#6e6e73" }}>Lidlar</div><div style={{ fontSize: 26, fontWeight: 900, color: "#10b981" }}>{report.leads}</div></div>
+      <div className="card" style={{ padding: 16 }}><div style={{ color: "#6e6e73" }}>Sotuvlar</div><div style={{ fontSize: 26, fontWeight: 900, color: "#0a84ff" }}>{report.sales}</div></div>
+      <div className="card" style={{ padding: 16 }}><div style={{ color: "#6e6e73" }}>Progress</div><div style={{ fontSize: 26, fontWeight: 900, color: "#ff9f0a" }}>{progress}%</div></div>
+    </div>
+  );
+}
+
+function TeamPage({ employees, role, projects, onOpen, onAdd, onEdit, onDelete }) {
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h2 style={{ margin: 0 }}>Xodimlar bazasi</h2>
+        {(role === ROLES.CEO || role === ROLES.MANAGER) && <button className="btn btn-primary" onClick={onAdd}>+ Xodim qo'shish</button>}
+      </div>
+
+      <div className="table-wrap card" style={{ padding: 0 }}>
+        <table className="table" style={{ minWidth: 1200 }}>
+          <thead>
+            <tr>
+              <th>Xodim</th><th>Lavozim</th><th>Bo'lim</th><th>KPI</th><th>Load</th><th>Task</th>{canViewMoney(role) && <th>Oylik</th>}<th>Loyihalar</th><th>Amallar</th>
+            </tr>
+          </thead>
+          <tbody>
+            {employees.map((e) => {
+              const pcount = projects.filter((p) => p.team.includes(e.id)).length;
+              return (
+                <tr key={e.id}>
+                  <td>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <Avatar name={e.name} size={28} />
+                      <span style={{ fontWeight: 800 }}>{e.name}</span>
+                    </div>
+                  </td>
+                  <td>{e.role}</td>
+                  <td><span className="chip" style={{ background: `${DEPT_COLORS[e.dept] || "#0a84ff"}1a`, color: DEPT_COLORS[e.dept] || "#0a84ff" }}>{e.dept}</span></td>
+                  <td className="cell-nowrap" style={{ fontWeight: 800 }}>{e.kpi}%</td>
+                  <td className="cell-nowrap">{e.load}%</td>
+                  <td className="cell-nowrap">{e.doneCount}/{e.assigned}</td>
+                  {canViewMoney(role) && <td className="cell-nowrap" style={{ fontWeight: 700 }}>{fmtMoney(e.salary)}</td>}
+                  <td className="cell-nowrap">{pcount}</td>
+                  <td>
+                    <div style={{ display: "flex", gap: 6, whiteSpace: "nowrap" }}>
+                      <button className="btn btn-secondary" style={{ padding: "6px 10px" }} onClick={() => onOpen(e.id)}>Ochish</button>
+                      {(role === ROLES.CEO || role === ROLES.MANAGER) && (
+                        <>
+                          <button className="btn btn-secondary" style={{ padding: "6px 10px" }} onClick={() => onEdit(e)}>Edit</button>
+                          <button className="btn btn-danger" style={{ padding: "6px 10px" }} onClick={() => onDelete(e.id)}>Delete</button>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function EmployeeDetail({ employee, role, projects, onBack }) {
+  const tasks = projects.flatMap((p) => p.tasks.filter((t) => t.owner === employee.id).map((t) => ({ ...t, project: p.name })));
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <button className="btn btn-secondary" onClick={onBack} style={{ width: "fit-content" }}>← Orqaga</button>
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <Avatar name={employee.name} size={52} />
+            <div>
+              <div style={{ fontSize: 24, fontWeight: 900 }}>{employee.name}</div>
+              <div style={{ color: "#6e6e73" }}>{employee.role} · {employee.dept}</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 16 }}>
+            <div><div style={{ color: "#6e6e73", fontSize: 12 }}>KPI</div><div style={{ fontWeight: 900, fontSize: 24, color: "#5e5ce6" }}>{employee.kpi}%</div></div>
+            <div><div style={{ color: "#6e6e73", fontSize: 12 }}>Load</div><div style={{ fontWeight: 900, fontSize: 24, color: "#0a84ff" }}>{employee.load}%</div></div>
+            {canViewMoney(role) && <div><div style={{ color: "#6e6e73", fontSize: 12 }}>Oylik</div><div style={{ fontWeight: 900, fontSize: 24, color: "#30d158" }}>{fmtMoney(employee.salary)}</div></div>}
+          </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 14 }}>
+        <div style={{ fontWeight: 800, marginBottom: 8 }}>Topshiriqlar</div>
+        <div className="table-wrap">
+          <table className="table" style={{ minWidth: 900 }}>
+            <thead><tr><th>Task</th><th>Loyiha</th><th>Deadline</th><th>Status</th><th>Izoh</th></tr></thead>
+            <tbody>
+              {tasks.map((t) => (
+                <tr key={t.id}>
+                  <td className="cell-clip" title={t.name}>{t.name}</td>
+                  <td className="cell-clip" title={t.project}>{t.project}</td>
+                  <td className="cell-nowrap">{t.deadline}</td>
+                  <td><StatusPill status={t.status} /></td>
+                  <td className="cell-clip" title={t.note}>{t.note || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ShootingPage({ items, employees, projects, onAdd, onEdit, onDelete }) {
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h2 style={{ margin: 0 }}>Syomka kalendari</h2>
+        <button className="btn btn-primary" onClick={onAdd}>+ Syomka qo'shish</button>
+      </div>
+      <div className="table-wrap card" style={{ padding: 0 }}>
+        <table className="table" style={{ minWidth: 1000 }}>
+          <thead><tr><th>Sana</th><th>Loyiha</th><th>Tur</th><th>Lokatsiya</th><th>Operator</th><th>Status</th><th>Amallar</th></tr></thead>
+          <tbody>
+            {items.map((s) => (
+              <tr key={s.id}>
+                <td className="cell-nowrap">{s.date}</td>
+                <td>{projects.find((p) => p.id === s.project)?.name || "-"}</td>
+                <td>{s.type}</td>
+                <td>{s.location}</td>
+                <td>{getEmployee(s.operator, employees)?.name || "-"}</td>
+                <td><StatusPill status={s.status} /></td>
+                <td>
+                  <div style={{ display: "flex", gap: 6, whiteSpace: "nowrap" }}>
+                    <button className="btn btn-secondary" style={{ padding: "6px 10px" }} onClick={() => onEdit(s)}>Edit</button>
+                    <button className="btn btn-danger" style={{ padding: "6px 10px" }} onClick={() => onDelete(s.id)}>Delete</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function MeetingsPage({ items, employees, onAdd, onEdit, onDelete }) {
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h2 style={{ margin: 0 }}>Uchrashuvlar</h2>
+        <button className="btn btn-primary" onClick={onAdd}>+ Yozuv qo'shish</button>
+      </div>
+      <div className="table-wrap card" style={{ padding: 0 }}>
+        <table className="table" style={{ minWidth: 980 }}>
+          <thead><tr><th>Mijoz</th><th>Sana</th><th>Tur</th><th>Kim</th><th>Natija</th><th>Keyingi qadam</th><th>Amallar</th></tr></thead>
+          <tbody>
+            {items.map((m) => (
+              <tr key={m.id}>
+                <td>{m.client}</td>
+                <td className="cell-nowrap">{m.date}</td>
+                <td className="cell-nowrap">{m.type}</td>
+                <td>{getEmployee(m.who, employees)?.name || "-"}</td>
+                <td className="cell-clip" title={m.result}>{m.result || "-"}</td>
+                <td className="cell-clip" title={m.next}>{m.next || "-"}</td>
+                <td>
+                  <div style={{ display: "flex", gap: 6, whiteSpace: "nowrap" }}>
+                    <button className="btn btn-secondary" style={{ padding: "6px 10px" }} onClick={() => onEdit(m)}>Edit</button>
+                    <button className="btn btn-danger" style={{ padding: "6px 10px" }} onClick={() => onDelete(m.id)}>Delete</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ReportsPage({ projects }) {
+  const totalBudget = projects.reduce((a, p) => a + toNum(p.report.budget), 0);
+  const totalLeads = projects.reduce((a, p) => a + toNum(p.report.leads), 0);
+  const totalSales = projects.reduce((a, p) => a + toNum(p.report.sales), 0);
+  const avgRoi = (projects.reduce((a, p) => a + toNum(p.report.roi), 0) / (projects.length || 1)).toFixed(1);
+
+  return (
+    <div style={{ display: "grid", gap: 16, maxWidth: 1380, margin: "0 auto" }}>
+      <h1 style={{ margin: 0, textAlign: "center", fontSize: 46, letterSpacing: "-0.03em", fontWeight: 900 }}>Hisobotlar</h1>
+
+      <div className="grid-4" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14 }}>
+        <ReportStat icon="💰" value={fmtMoney(totalBudget)} label="Jami byudjet" color="#5e5ce6" />
+        <ReportStat icon="🎯" value={totalLeads} label="Jami lidlar" color="#10b981" />
+        <ReportStat icon="🛒" value={totalSales} label="Jami sotuvlar" color="#0a84ff" />
+        <ReportStat icon="📈" value={`x${avgRoi}`} label="O'rtacha ROI" color="#8b5cf6" />
+      </div>
+
+      <div className="card" style={{ padding: 18 }}>
+        <div style={{ textAlign: "center", fontSize: 40, fontWeight: 900, marginBottom: 14, letterSpacing: "-0.03em" }}>Loyihalar bo'yicha hisobot</div>
+        <div className="table-wrap">
+          <table className="table" style={{ minWidth: 1200 }}>
+            <thead><tr><th>Loyiha</th><th>Byudjet</th><th>Lidlar</th><th>CPL</th><th>Sotuvlar</th><th>ROI</th><th>Progress</th></tr></thead>
+            <tbody>
+              {projects.map((p) => {
+                const pr = progressCalc(p);
+                return (
+                  <tr key={p.id}>
+                    <td><div style={{ fontWeight: 900, fontSize: 17 }}>{p.name}</div><div style={{ color: "#91a0b7", fontSize: 12, marginTop: 2 }}>{p.client}</div></td>
+                    <td className="cell-nowrap" style={{ fontSize: 15 }}>{fmtMoney(p.report.budget)}</td>
+                    <td style={{ color: "#10b981", fontWeight: 900, fontSize: 15 }}>{p.report.leads || "-"}</td>
+                    <td className="cell-nowrap" style={{ fontSize: 15 }}>{p.report.cpl ? fmtMoney(p.report.cpl) : "-"}</td>
+                    <td style={{ color: "#0a84ff", fontWeight: 900, fontSize: 15 }}>{p.report.sales || "-"}</td>
+                    <td style={{ color: "#8b5cf6", fontWeight: 900, fontSize: 15 }}>{p.report.roi ? `x${p.report.roi}` : "-"}</td>
+                    <td className="cell-nowrap">
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 150, height: 12, borderRadius: 999, background: "#ececf0", overflow: "hidden" }}><div style={{ width: `${pr}%`, height: "100%", background: "#5e5ce6" }} /></div>
+                        <strong style={{ fontSize: 15 }}>{pr}%</strong>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReportStat({ icon, value, label, color }) {
+  return (
+    <div className="card" style={{ padding: 18, textAlign: "center", minHeight: 206, display: "grid", alignContent: "center", gap: 4 }}>
+      <div style={{ fontSize: 34, lineHeight: 1 }}>{icon}</div>
+      <div style={{ marginTop: 2, fontSize: 50, lineHeight: 1, fontWeight: 900, color, letterSpacing: "-0.03em" }}>{value}</div>
+      <div style={{ marginTop: 2, color: "#62728e", fontSize: 16 }}>{label}</div>
+    </div>
+  );
+}
+
+function WorkflowPage() {
+  const steps = [
+    { n: 1, icon: "🤝", title: "Mijoz keladi", dept: "Sales bo'limi", desc: "Sales manager bilan birinchi uchrashuv", color: "#635bff" },
+    { n: 2, icon: "📋", title: "Brief olinadi", dept: "Project Management", desc: "Mijoz ehtiyoji, maqsad va byudjet aniqlanadi", color: "#0a84ff" },
+    { n: 3, icon: "🧠", title: "Strategiya yoziladi", dept: "Project Management", desc: "Kontent strategiyasi va maqsadlar belgilanadi", color: "#7c5cf6" },
+    { n: 4, icon: "📊", title: "Mediapan yaratiladi", dept: "SMM bo'limi", desc: "Oylik kontent jadvali va rejasi tuziladi", color: "#ff7a1a" },
+    { n: 5, icon: "✍️", title: "Kontent ishlab chiqiladi", dept: "SMM + Media bo'lim", desc: "Post, reels, story va video materiallar", color: "#18b981" },
+    { n: 6, icon: "🎬", title: "Syomka bo'ladi", dept: "Media bo'limi", desc: "Video va foto suratga olish jarayoni", color: "#ef2f63" },
+    { n: 7, icon: "🚀", title: "Reklama ishga tushadi", dept: "Target bo'limi", desc: "Target reklamalar faollashtiriladi", color: "#f59e0b" },
+    { n: 8, icon: "📈", title: "Hisobot qilinadi", dept: "Project Management", desc: "KPI, ROI va natijalar CEO ga taqdimot", color: "#1f9cf0" },
+  ];
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <h1 style={{ margin: 0, textAlign: "center", fontSize: 40, letterSpacing: "-0.02em" }}>Workflow & Bo'limlar</h1>
+
+      <div className="card" style={{ padding: 18 }}>
+        <div style={{ textAlign: "center", fontWeight: 900, fontSize: 40, marginBottom: 14 }}>🔄 Loyiha jarayoni (8 bosqich)</div>
+        <div style={{ display: "grid", gridTemplateColumns: "84px 1fr", gap: 18 }}>
+          <div style={{ position: "relative" }}>
+            <div style={{ position: "absolute", left: 36, top: 24, bottom: 24, width: 3, background: "#d1d5db" }} />
+            <div style={{ display: "grid", gap: 26 }}>
+              {steps.map((s) => (
+                <div key={s.n} style={{ width: 56, height: 56, borderRadius: "50%", background: s.color, color: "#fff", display: "grid", placeItems: "center", fontWeight: 900, fontSize: 36, zIndex: 1, marginLeft: 8 }}>{s.n}</div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gap: 17 }}>
+            {steps.map((s) => (
+              <div key={s.n} style={{ display: "grid", gap: 4, textAlign: "left", minHeight: 78 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 29, lineHeight: 1 }}>{s.icon}</span>
+                  <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: "-0.01em" }}>{s.title}</div>
+                  <span className="chip" style={{ background: `${s.color}18`, color: s.color, fontWeight: 800, fontSize: 17, padding: "6px 14px" }}>{s.dept}</span>
+                </div>
+                <div style={{ color: "#60738f", fontSize: 19, marginLeft: 44, textAlign: "left" }}>{s.desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CommonChat({ profile, open, onToggle, messages, value, onChange, onSend }) {
+  return (
+    <div style={{ position: "fixed", right: 12, bottom: 12, width: open ? "min(420px, calc(100vw - 24px))" : 160, zIndex: 9998 }}>
+      <div className="card" style={{ borderColor: "#bfdcff", overflow: "hidden" }}>
+        <div style={{ padding: "10px 12px", background: "#0a84ff", color: "#fff", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <Avatar name={profile.name} size={24} />
+            <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontWeight: 900 }}>Umumiy chat</div>
+          </div>
+          <button className="btn" onClick={onToggle} style={{ padding: "6px 10px", background: "rgba(255,255,255,.2)", color: "#fff", border: "1px solid rgba(255,255,255,.25)" }}>{open ? "Yopish" : "Ochish"}</button>
+        </div>
+
+        {open && (
+          <>
+            <div style={{ maxHeight: 260, overflow: "auto", padding: 10, background: "#f5f5f7", display: "grid", gap: 7 }}>
+              {messages.map((m) => (
+                <div key={m.id} style={{ background: "#fff", border: "1px solid #e5e5ea", borderRadius: 10, padding: 8 }}>
+                  <div style={{ color: "#6e6e73", fontSize: 11, marginBottom: 3, fontWeight: 700 }}>{m.author}</div>
+                  <div style={{ color: "#1d1d1f", fontSize: 14, lineHeight: 1.35, wordBreak: "break-word" }}>{m.text}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ padding: 8, borderTop: "1px solid #ececf0", display: "grid", gridTemplateColumns: "1fr auto", gap: 6 }}>
+              <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder="Xabar yozing" onKeyDown={(e) => { if (e.key === "Enter") onSend(); }} />
+              <button className="btn btn-primary" onClick={onSend}>Yuborish</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProjectModal({ title, employees, initial, onClose, onSave }) {
+  const [f, setF] = useState({
+    name: initial?.name || "",
+    client: initial?.client || "",
+    type: initial?.type || "SMM",
+    start: initial?.start || "",
+    end: initial?.end || "",
+    manager: initial?.manager || employees[0]?.id || 1,
+    priority: initial?.priority || "Medium",
+    budget: initial?.report?.budget || 0,
+  });
+  return (
+    <Modal title={title} onClose={onClose}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
+        <Field label="Nomi"><Input value={f.name} onChange={(e) => setF((v) => ({ ...v, name: e.target.value }))} /></Field>
+        <Field label="Mijoz"><Input value={f.client} onChange={(e) => setF((v) => ({ ...v, client: e.target.value }))} /></Field>
+        <Field label="Tur"><Input value={f.type} onChange={(e) => setF((v) => ({ ...v, type: e.target.value }))} /></Field>
+        <Field label="Byudjet"><Input type="number" value={f.budget} onChange={(e) => setF((v) => ({ ...v, budget: e.target.value }))} /></Field>
+        <Field label="Boshlanish"><Input type="date" value={f.start} onChange={(e) => setF((v) => ({ ...v, start: e.target.value }))} /></Field>
+        <Field label="Tugash"><Input type="date" value={f.end} onChange={(e) => setF((v) => ({ ...v, end: e.target.value }))} /></Field>
+        <Field label="Manager"><Select value={f.manager} onChange={(e) => setF((v) => ({ ...v, manager: e.target.value }))}>{employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
+        <Field label="Priority"><Select value={f.priority} onChange={(e) => setF((v) => ({ ...v, priority: e.target.value }))}><option>High</option><option>Medium</option><option>Low</option></Select></Field>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button className="btn btn-primary" onClick={() => onSave(f)}>Saqlash</button>
+        <button className="btn btn-secondary" onClick={onClose}>Bekor</button>
+      </div>
+    </Modal>
+  );
+}
+
+function EmployeeModal({ title, initial, onClose, onSave }) {
+  const [f, setF] = useState({
+    name: initial?.name || "",
+    role: initial?.role || "",
+    dept: initial?.dept || "SMM bolimi",
+    salary: initial?.salary || 0,
+  });
+  return (
+    <Modal title={title} onClose={onClose}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
+        <Field label="Ism"><Input value={f.name} onChange={(e) => setF((v) => ({ ...v, name: e.target.value }))} /></Field>
+        <Field label="Lavozim"><Input value={f.role} onChange={(e) => setF((v) => ({ ...v, role: e.target.value }))} /></Field>
+        <Field label="Bo'lim"><Input value={f.dept} onChange={(e) => setF((v) => ({ ...v, dept: e.target.value }))} /></Field>
+        <Field label="Oylik"><Input type="number" value={f.salary} onChange={(e) => setF((v) => ({ ...v, salary: e.target.value }))} /></Field>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button className="btn btn-primary" onClick={() => onSave(f)}>Saqlash</button>
+        <button className="btn btn-secondary" onClick={onClose}>Bekor</button>
+      </div>
+    </Modal>
+  );
+}
+
+function TaskModal({ initial, employees, onClose, onSave }) {
+  const [f, setF] = useState({
+    name: initial?.name || "",
+    owner: initial?.owner || employees[0]?.id || 1,
+    start: initial?.start || "",
+    deadline: initial?.deadline || "",
+    status: initial?.status || "Planned",
+    note: initial?.note || "",
+  });
+  return (
+    <Modal title={initial ? "Task edit" : "Yangi task"} onClose={onClose}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
+        <Field label="Task nomi"><Input value={f.name} onChange={(e) => setF((v) => ({ ...v, name: e.target.value }))} /></Field>
+        <Field label="Mas'ul"><Select value={f.owner} onChange={(e) => setF((v) => ({ ...v, owner: e.target.value }))}>{employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
+        <Field label="Boshlanish"><Input type="date" value={f.start} onChange={(e) => setF((v) => ({ ...v, start: e.target.value }))} /></Field>
+        <Field label="Deadline"><Input type="date" value={f.deadline} onChange={(e) => setF((v) => ({ ...v, deadline: e.target.value }))} /></Field>
+        <Field label="Status"><Select value={f.status} onChange={(e) => setF((v) => ({ ...v, status: e.target.value }))}><option>Planned</option><option>In Progress</option><option>Done</option><option>Review</option></Select></Field>
+        <Field label="Izoh"><Input value={f.note} onChange={(e) => setF((v) => ({ ...v, note: e.target.value }))} /></Field>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}><button className="btn btn-primary" onClick={() => onSave(f)}>Saqlash</button><button className="btn btn-secondary" onClick={onClose}>Bekor</button></div>
+    </Modal>
+  );
+}
+
+function ContentModal({ initial, employees, onClose, onSave }) {
+  const [f, setF] = useState({
+    date: initial?.date || "",
+    platform: initial?.platform || "Instagram",
+    format: initial?.format || "Post",
+    topic: initial?.topic || "",
+    owner: initial?.owner || employees[0]?.id || 1,
+    status: initial?.status || "Planned",
+    mediaReady: initial?.mediaReady || false,
+    note: initial?.note || "",
+  });
+  return (
+    <Modal title={initial ? "Kontent edit" : "Yangi kontent"} onClose={onClose}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
+        <Field label="Sana"><Input type="date" value={f.date} onChange={(e) => setF((v) => ({ ...v, date: e.target.value }))} /></Field>
+        <Field label="Platforma"><Select value={f.platform} onChange={(e) => setF((v) => ({ ...v, platform: e.target.value }))}><option>Instagram</option><option>TikTok</option><option>Facebook</option><option>YouTube</option><option>Telegram</option></Select></Field>
+        <Field label="Tur"><Select value={f.format} onChange={(e) => setF((v) => ({ ...v, format: e.target.value }))}><option>Post</option><option>Reels</option><option>Story</option><option>Video</option></Select></Field>
+        <Field label="Mavzu"><Input value={f.topic} onChange={(e) => setF((v) => ({ ...v, topic: e.target.value }))} /></Field>
+        <Field label="Mas'ul"><Select value={f.owner} onChange={(e) => setF((v) => ({ ...v, owner: e.target.value }))}>{employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
+        <Field label="Status"><Select value={f.status} onChange={(e) => setF((v) => ({ ...v, status: e.target.value }))}><option>Planned</option><option>In Progress</option><option>Review</option><option>Done</option></Select></Field>
+        <Field label="Media tayyor"><Select value={String(f.mediaReady)} onChange={(e) => setF((v) => ({ ...v, mediaReady: e.target.value === "true" }))}><option value="false">Yo'q</option><option value="true">Ha</option></Select></Field>
+        <Field label="Izoh"><Input value={f.note} onChange={(e) => setF((v) => ({ ...v, note: e.target.value }))} /></Field>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}><button className="btn btn-primary" onClick={() => onSave(f)}>Saqlash</button><button className="btn btn-secondary" onClick={onClose}>Bekor</button></div>
+    </Modal>
+  );
+}
+
+function MediaModal({ initial, employees, onClose, onSave }) {
+  const [f, setF] = useState({
+    date: initial?.date || "",
+    platform: initial?.platform || "Instagram",
+    type: initial?.type || "Reach",
+    owner: initial?.owner || employees[0]?.id || 1,
+    budget: initial?.budget || 0,
+    status: initial?.status || "Planned",
+    note: initial?.note || "",
+  });
+  return (
+    <Modal title={initial ? "Mediaplan edit" : "Yangi mediaplan"} onClose={onClose}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
+        <Field label="Sana"><Input type="date" value={f.date} onChange={(e) => setF((v) => ({ ...v, date: e.target.value }))} /></Field>
+        <Field label="Platforma"><Select value={f.platform} onChange={(e) => setF((v) => ({ ...v, platform: e.target.value }))}><option>Instagram</option><option>Facebook</option><option>TikTok</option><option>YouTube</option></Select></Field>
+        <Field label="Tur"><Input value={f.type} onChange={(e) => setF((v) => ({ ...v, type: e.target.value }))} /></Field>
+        <Field label="Mas'ul"><Select value={f.owner} onChange={(e) => setF((v) => ({ ...v, owner: e.target.value }))}>{employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
+        <Field label="Byudjet"><Input type="number" value={f.budget} onChange={(e) => setF((v) => ({ ...v, budget: e.target.value }))} /></Field>
+        <Field label="Status"><Select value={f.status} onChange={(e) => setF((v) => ({ ...v, status: e.target.value }))}><option>Planned</option><option>In Progress</option><option>Done</option></Select></Field>
+        <Field label="Izoh"><Input value={f.note} onChange={(e) => setF((v) => ({ ...v, note: e.target.value }))} /></Field>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}><button className="btn btn-primary" onClick={() => onSave(f)}>Saqlash</button><button className="btn btn-secondary" onClick={onClose}>Bekor</button></div>
+    </Modal>
+  );
+}
+
+function CallModal({ initial, employees, onClose, onSave }) {
+  const [f, setF] = useState({
+    date: initial?.date || "",
+    type: initial?.type || "Call",
+    who: initial?.who || employees[0]?.id || 1,
+    result: initial?.result || "",
+    next: initial?.next || "",
+  });
+  return (
+    <Modal title={initial ? "Aloqa edit" : "Yangi aloqa"} onClose={onClose}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
+        <Field label="Sana"><Input type="date" value={f.date} onChange={(e) => setF((v) => ({ ...v, date: e.target.value }))} /></Field>
+        <Field label="Tur"><Select value={f.type} onChange={(e) => setF((v) => ({ ...v, type: e.target.value }))}><option>Call</option><option>Meeting</option></Select></Field>
+        <Field label="Kim gaplashdi"><Select value={f.who} onChange={(e) => setF((v) => ({ ...v, who: e.target.value }))}>{employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
+        <Field label="Natija"><Input value={f.result} onChange={(e) => setF((v) => ({ ...v, result: e.target.value }))} /></Field>
+        <Field label="Keyingi qadam"><Input value={f.next} onChange={(e) => setF((v) => ({ ...v, next: e.target.value }))} /></Field>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}><button className="btn btn-primary" onClick={() => onSave(f)}>Saqlash</button><button className="btn btn-secondary" onClick={onClose}>Bekor</button></div>
+    </Modal>
+  );
+}
+
+function ShootingModal({ title, projects, employees, initial, onClose, onSave }) {
+  const [f, setF] = useState({
+    date: initial?.date || "",
+    project: initial?.project || projects[0]?.id || 1,
+    type: initial?.type || "",
+    location: initial?.location || "",
+    operator: initial?.operator || employees[0]?.id || 1,
+    goal: initial?.goal || "",
+    status: initial?.status || "Planned",
+  });
+  return (
+    <Modal title={title} onClose={onClose}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
+        <Field label="Sana"><Input type="date" value={f.date} onChange={(e) => setF((v) => ({ ...v, date: e.target.value }))} /></Field>
+        <Field label="Loyiha"><Select value={f.project} onChange={(e) => setF((v) => ({ ...v, project: e.target.value }))}>{projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
+        <Field label="Turi"><Input value={f.type} onChange={(e) => setF((v) => ({ ...v, type: e.target.value }))} /></Field>
+        <Field label="Lokatsiya"><Input value={f.location} onChange={(e) => setF((v) => ({ ...v, location: e.target.value }))} /></Field>
+        <Field label="Operator"><Select value={f.operator} onChange={(e) => setF((v) => ({ ...v, operator: e.target.value }))}>{employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
+        <Field label="Maqsad"><Input value={f.goal} onChange={(e) => setF((v) => ({ ...v, goal: e.target.value }))} /></Field>
+        <Field label="Status"><Select value={f.status} onChange={(e) => setF((v) => ({ ...v, status: e.target.value }))}><option>Planned</option><option>In Progress</option><option>Done</option></Select></Field>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}><button className="btn btn-primary" onClick={() => onSave(f)}>Saqlash</button><button className="btn btn-secondary" onClick={onClose}>Bekor</button></div>
+    </Modal>
+  );
+}
+
+function MeetingModal({ title, employees, initial, onClose, onSave }) {
+  const [f, setF] = useState({
+    client: initial?.client || "",
+    date: initial?.date || "",
+    type: initial?.type || "Call",
+    who: initial?.who || employees[0]?.id || 1,
+    result: initial?.result || "",
+    next: initial?.next || "",
+  });
+  return (
+    <Modal title={title} onClose={onClose}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
+        <Field label="Mijoz"><Input value={f.client} onChange={(e) => setF((v) => ({ ...v, client: e.target.value }))} /></Field>
+        <Field label="Sana"><Input type="date" value={f.date} onChange={(e) => setF((v) => ({ ...v, date: e.target.value }))} /></Field>
+        <Field label="Tur"><Select value={f.type} onChange={(e) => setF((v) => ({ ...v, type: e.target.value }))}><option>Call</option><option>Meeting</option></Select></Field>
+        <Field label="Kim"><Select value={f.who} onChange={(e) => setF((v) => ({ ...v, who: e.target.value }))}>{employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></Field>
+        <Field label="Natija"><Input value={f.result} onChange={(e) => setF((v) => ({ ...v, result: e.target.value }))} /></Field>
+        <Field label="Keyingi qadam"><Input value={f.next} onChange={(e) => setF((v) => ({ ...v, next: e.target.value }))} /></Field>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}><button className="btn btn-primary" onClick={() => onSave(f)}>Saqlash</button><button className="btn btn-secondary" onClick={onClose}>Bekor</button></div>
+    </Modal>
+  );
+}
