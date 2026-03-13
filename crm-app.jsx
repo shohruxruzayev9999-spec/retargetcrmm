@@ -6,7 +6,7 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
-import { doc, getDoc, onSnapshot, runTransaction, setDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, runTransaction, setDoc, writeBatch } from "firebase/firestore";
 import { auth, db, googleProvider, hasFirebaseConfig } from "./firebase";
 
 const T = {
@@ -73,10 +73,19 @@ const PROJECT_STATUSES = ["Rejalashtirildi", "Jarayonda", "Tasdiqlandi", "Yakunl
 const TASK_STATUSES = ["Rejalashtirildi", "Jarayonda", "Ko'rib chiqilmoqda", "Tasdiqlandi", "Bajarildi", "Rad etildi"];
 const CONTENT_STATUSES = ["Rejalashtirildi", "Jarayonda", "Ko'rib chiqilmoqda", "Tasdiqlandi", "E'lon qilindi", "Rad etildi"];
 const PLAN_STATUSES = ["Rejalashtirildi", "Jarayonda", "Tasdiqlandi", "Bajarildi"];
+const COMMON_WORK_STATUSES = ["Yangi", "Jarayonda", "Kutilmoqda", "Tasdiqlangan", "Tugallangan", "Bekor qilingan"];
+const SHOOT_STATUSES = ["Yangi", "Rejalashtirildi", "Jarayonda", "Kutilmoqda", "Tasdiqlangan", "Tasdiqlandi", "Tugallangan", "Bajarildi", "Bekor qilingan"];
+const CALL_STATUSES = COMMON_WORK_STATUSES;
 const PRIORITIES = ["Yuqori", "O'rta", "Past"];
 const PLATFORMS = ["Instagram", "Facebook", "TikTok", "YouTube", "Telegram"];
 const FORMATS = ["Post", "Reels", "Story", "Video", "Carousel", "Live"];
 const DEPARTMENTS = ["SMM bo'limi", "Target bo'limi", "Media bo'limi", "Sales bo'limi", "Project Management", "Boshqaruv"];
+const EMOJI_GROUPS = [
+  { id: "smileys", label: "😊", name: "Smileys", items: ["😀", "😄", "😁", "🙂", "😉", "😍", "🥰", "🤩", "😎", "🥹", "🤝", "🙏"] },
+  { id: "gestures", label: "🙌", name: "Qo'llar", items: ["👍", "👏", "🙌", "👌", "✍️", "🤞", "🫶", "💪", "🫡", "🤜", "🤛", "👀"] },
+  { id: "work", label: "💼", name: "Ish", items: ["✅", "🗂️", "📌", "📎", "💼", "📈", "📊", "📅", "🎯", "🚀", "🔥", "💡"] },
+  { id: "moods", label: "🌈", name: "Kayfiyat", items: ["🎉", "🥳", "❤️", "💙", "💚", "💜", "🌟", "⚡", "☕", "🍀", "🌈", "✨"] },
+];
 
 const EMPTY_CRM = {
   projects: [],
@@ -95,13 +104,18 @@ const REPORT_ROLES = new Set(["CEO", "INVESTOR"]);
 const PEOPLE_ROLES = new Set(["CEO", "MANAGER", "SUPERVISOR"]);
 
 const STATUS_META = {
+  Yangi: { bg: "#eff6ff", text: "#1d4ed8", border: "#bfdbfe" },
   "Rejalashtirildi": { bg: "#eef2ff", text: "#4338ca", border: "#c7d2fe" },
   "Jarayonda": { bg: "#dbeafe", text: "#1d4ed8", border: "#93c5fd" },
+  Kutilmoqda: { bg: "#fff7ed", text: "#c2410c", border: "#fdba74" },
   "Ko'rib chiqilmoqda": { bg: "#ffedd5", text: "#c2410c", border: "#fdba74" },
+  "Tasdiqlangan": { bg: "#dcfce7", text: "#15803d", border: "#86efac" },
   "Tasdiqlandi": { bg: "#dcfce7", text: "#15803d", border: "#86efac" },
+  "Tugallangan": { bg: "#dcfce7", text: "#166534", border: "#4ade80" },
   "Bajarildi": { bg: "#dcfce7", text: "#166534", border: "#4ade80" },
   "E'lon qilindi": { bg: "#ccfbf1", text: "#0f766e", border: "#5eead4" },
   "Rad etildi": { bg: "#fee2e2", text: "#b91c1c", border: "#fca5a5" },
+  "Bekor qilingan": { bg: "#f3f4f6", text: "#6b7280", border: "#d1d5db" },
   "Yakunlandi": { bg: "#dcfce7", text: "#166534", border: "#4ade80" },
   "To'xtatildi": { bg: T.colors.borderLight, text: T.colors.textSecondary, border: T.colors.border },
 };
@@ -318,12 +332,63 @@ function canManagePeople(role) {
   return PEOPLE_ROLES.has(role);
 }
 
+function isProjectMember(profile, project) {
+  if (!profile || !project) return false;
+  return project.managerId === profile.uid || project.teamIds.includes(profile.uid);
+}
+
+function canWorkInProject(profile, project) {
+  if (!profile || !project || profile.role === "INVESTOR") return false;
+  return canEdit(profile.role) || isProjectMember(profile, project);
+}
+
+function canManageProjectMeta(profile) {
+  return canEdit(profile?.role);
+}
+
+function projectMembers(project, employees) {
+  const ids = new Set([project?.managerId, ...(project?.teamIds || [])].filter(Boolean));
+  const list = employees.filter((employee) => ids.has(employee.id));
+  return list.length ? list : employees;
+}
+
 function visibleProjects(profile, projects) {
   if (!profile) return [];
   if (profile.role === "EMPLOYEE") {
     return projects.filter((project) => project.teamIds.includes(profile.uid) || project.managerId === profile.uid);
   }
   return projects;
+}
+
+function visibleShoots(profile, shoots, projects) {
+  const allowedProjects = new Set(visibleProjects(profile, projects).map((project) => project.id));
+  return shoots.filter((shoot) => allowedProjects.has(shoot.projectId));
+}
+
+function normalizeComments(comments) {
+  return Array.isArray(comments) ? comments : [];
+}
+
+function createComment(text, actor) {
+  return {
+    id: makeId("comment"),
+    text,
+    userId: actor?.uid || "",
+    authorName: actor?.name || actor?.email || "Xodim",
+    createdAt: isoNow(),
+  };
+}
+
+function withRecordMeta(record, actor) {
+  const now = isoNow();
+  return {
+    ...record,
+    comments: normalizeComments(record.comments),
+    createdAt: record.createdAt || now,
+    createdBy: record.createdBy || actor?.uid || "",
+    updatedAt: now,
+    updatedBy: actor?.uid || "",
+  };
 }
 
 function unreadNotifications(notifications, uid) {
@@ -640,6 +705,133 @@ function PriorityBadge({ value }) {
     <span style={{ background: meta.bg, color: meta.text, borderRadius: T.radius.full, padding: "5px 10px", fontSize: 12, fontWeight: 800 }}>
       {value}
     </span>
+  );
+}
+
+function CommentThread({ comments = [], onAddComment, placeholder = "Izoh qoldiring...", accent = T.colors.accent }) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const list = sortByRecent(normalizeComments(comments), "createdAt").slice(0, open ? comments.length : 2);
+
+  function submit() {
+    const text = value.trim();
+    if (!text || !onAddComment) return;
+    onAddComment(text);
+    setValue("");
+    setOpen(true);
+  }
+
+  return (
+    <div style={{ minWidth: 180 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        style={{ border: "none", background: T.colors.borderLight, color: accent, borderRadius: T.radius.full, padding: "6px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}
+      >
+        {comments.length ? `${comments.length} ta izoh` : "Izoh qo'shish"}
+      </button>
+      {(open || comments.length) ? (
+        <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+          {list.length ? (
+            list.map((comment) => (
+              <div key={comment.id} style={{ background: "#fff", border: `1px solid ${T.colors.borderLight}`, borderRadius: T.radius.md, padding: "8px 10px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800 }}>{comment.authorName || "Xodim"}</span>
+                  <span style={{ fontSize: 10, color: T.colors.textTertiary }}>{String(comment.createdAt || "").slice(5, 16).replace("T", " ")}</span>
+                </div>
+                <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.5, color: T.colors.textSecondary }}>{comment.text}</div>
+              </div>
+            ))
+          ) : null}
+          {onAddComment ? (
+            <div style={{ display: "grid", gap: 6 }}>
+              <textarea
+                value={value}
+                onChange={(event) => setValue(event.target.value)}
+                placeholder={placeholder}
+                rows={2}
+                style={{ width: "100%", border: `1px solid ${T.colors.border}`, borderRadius: T.radius.md, padding: "9px 10px", resize: "vertical", background: "#fff", fontFamily: T.font, fontSize: 12 }}
+              />
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <Button variant="secondary" onClick={submit} style={{ padding: "6px 10px" }}>Yuborish</Button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function EmojiPicker({ onSelect, onClose }) {
+  const [activeGroup, setActiveGroup] = useState(EMOJI_GROUPS[0].id);
+  const group = EMOJI_GROUPS.find((item) => item.id === activeGroup) || EMOJI_GROUPS[0];
+
+  return (
+    <Card style={{ position: "absolute", bottom: "calc(100% + 12px)", left: 0, width: 320, padding: 12, boxShadow: T.shadow.lg, zIndex: 25 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+        <div style={{ fontWeight: 800, fontSize: 13 }}>Emoji picker</div>
+        <button type="button" onClick={onClose} style={{ border: "none", background: T.colors.borderLight, color: T.colors.textSecondary, width: 26, height: 26, borderRadius: T.radius.full, cursor: "pointer" }}>×</button>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto" }}>
+        {EMOJI_GROUPS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => setActiveGroup(item.id)}
+            style={{
+              border: "none",
+              borderRadius: T.radius.full,
+              background: item.id === activeGroup ? T.colors.accentSoft : T.colors.borderLight,
+              color: item.id === activeGroup ? T.colors.accent : T.colors.textSecondary,
+              padding: "6px 10px",
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: 700,
+            }}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: T.colors.textSecondary, marginBottom: 8 }}>{group.name}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 6 }}>
+        {group.items.map((emoji) => (
+          <button
+            key={emoji}
+            type="button"
+            onClick={() => onSelect(emoji)}
+            style={{ border: "none", background: T.colors.bg, borderRadius: T.radius.md, padding: "9px 0", cursor: "pointer", fontSize: 18 }}
+          >
+            {emoji}
+          </button>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function ToastStack({ toasts }) {
+  if (!toasts.length) return null;
+  return (
+    <div style={{ position: "fixed", right: 22, bottom: 22, zIndex: 1400, display: "grid", gap: 10, width: 320 }}>
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          style={{
+            padding: "12px 14px",
+            borderRadius: T.radius.lg,
+            background: toast.tone === "error" ? T.colors.redSoft : "#ffffff",
+            color: toast.tone === "error" ? T.colors.red : T.colors.text,
+            border: `1px solid ${toast.tone === "error" ? "#fecaca" : T.colors.border}`,
+            boxShadow: T.shadow.md,
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 2 }}>{toast.tone === "error" ? "Xatolik" : "Muvaffaqiyatli"}</div>
+          <div style={{ fontSize: 13, lineHeight: 1.45 }}>{toast.text}</div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1188,7 +1380,7 @@ function ProjectFormModal({ employees, initialValue, onClose, onSubmit }) {
 
   function handleSubmit() {
     if (!form.name.trim() || !form.client.trim()) return;
-    onSubmit({ ...form, teamIds: Array.from(new Set(form.teamIds)) });
+    onSubmit({ ...form, teamIds: Array.from(new Set([...form.teamIds, form.managerId].filter(Boolean))) });
   }
 
   return (
@@ -1249,8 +1441,10 @@ function ReportEditor({ project, editable, onChange }) {
 }
 
 function TasksTab({ profile, project, employees, editable, onUpdateProject }) {
+  const sectionEditable = canWorkInProject(profile, project);
+  const assignableEmployees = projectMembers(project, employees);
   const [editingTask, setEditingTask] = useState(null);
-  const [draft, setDraft] = useState({ name: "", ownerId: employees[0]?.id || "", start: "", deadline: "", status: "Rejalashtirildi", note: "" });
+  const [draft, setDraft] = useState({ name: "", ownerId: assignableEmployees[0]?.id || "", start: "", deadline: "", status: "Rejalashtirildi", note: "", comments: [] });
 
   function openForEdit(task) {
     setEditingTask(task.id);
@@ -1259,14 +1453,14 @@ function TasksTab({ profile, project, employees, editable, onUpdateProject }) {
 
   function resetForm() {
     setEditingTask(null);
-    setDraft({ name: "", ownerId: employees[0]?.id || "", start: "", deadline: "", status: "Rejalashtirildi", note: "" });
+    setDraft({ name: "", ownerId: assignableEmployees[0]?.id || "", start: "", deadline: "", status: "Rejalashtirildi", note: "", comments: [] });
   }
 
   function saveTask() {
     if (!draft.name.trim()) return;
     const tasks = editingTask
-      ? project.tasks.map((task) => (task.id === editingTask ? { ...task, ...draft } : task))
-      : [...project.tasks, { ...draft, id: makeId("task") }];
+      ? project.tasks.map((task) => (task.id === editingTask ? withRecordMeta({ ...task, ...draft }, profile) : task))
+      : [...project.tasks, withRecordMeta({ ...draft, id: makeId("task") }, profile)];
     onUpdateProject({ ...project, tasks }, { notifyText: `Task yangilandi: ${draft.name}`, auditText: `Task saqlandi: ${draft.name}`, page: "projects" });
     resetForm();
   }
@@ -1275,6 +1469,18 @@ function TasksTab({ profile, project, employees, editable, onUpdateProject }) {
     onUpdateProject(
       { ...project, tasks: project.tasks.map((task) => (task.id === taskId ? { ...task, status } : task)) },
       { notifyText: "Task holati yangilandi", auditText: `Task statusi o'zgardi: ${status}`, page: "projects" }
+    );
+  }
+
+  function addComment(taskId, text) {
+    onUpdateProject(
+      {
+        ...project,
+        tasks: project.tasks.map((task) =>
+          task.id === taskId ? { ...task, comments: [...normalizeComments(task.comments), createComment(text, profile)] } : task
+        ),
+      },
+      { notifyText: "Task izohi qo'shildi", auditText: "Taskga izoh qo'shildi", page: "projects" }
     );
   }
 
@@ -1287,14 +1493,14 @@ function TasksTab({ profile, project, employees, editable, onUpdateProject }) {
     <Card>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <div style={{ fontSize: 18, fontWeight: 900 }}>Topshiriqlar</div>
-        {editable ? <Button onClick={resetForm}>Yangi task</Button> : null}
+        {sectionEditable ? <Button onClick={resetForm}>Yangi task</Button> : null}
       </div>
 
-      {editable ? (
+      {sectionEditable ? (
         <Card style={{ background: T.colors.bg, marginBottom: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
             <Field label="Task nomi" value={draft.name} onChange={(value) => setDraft((prev) => ({ ...prev, name: value }))} />
-            <Field label="Mas'ul" value={draft.ownerId} onChange={(value) => setDraft((prev) => ({ ...prev, ownerId: value }))} options={employees.map((employee) => ({ value: employee.id, label: employee.name }))} />
+            <Field label="Mas'ul" value={draft.ownerId} onChange={(value) => setDraft((prev) => ({ ...prev, ownerId: value }))} options={assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))} />
             <Field label="Boshlanish" type="date" value={draft.start} onChange={(value) => setDraft((prev) => ({ ...prev, start: value }))} />
             <Field label="Deadline" type="date" value={draft.deadline} onChange={(value) => setDraft((prev) => ({ ...prev, deadline: value }))} />
             <Field label="Status" value={draft.status} onChange={(value) => setDraft((prev) => ({ ...prev, status: value }))} options={TASK_STATUSES} />
@@ -1308,10 +1514,10 @@ function TasksTab({ profile, project, employees, editable, onUpdateProject }) {
       ) : null}
 
       {project.tasks.length ? (
-        <DataTable columns={["Task", "Mas'ul", "Boshlanish", "Deadline", "Holat", "Izoh", "Amal"]}>
+        <DataTable columns={["Task", "Mas'ul", "Boshlanish", "Deadline", "Holat", "Izoh", "Komment", "Amal"]}>
           {project.tasks.map((task) => {
             const owner = employees.find((employee) => employee.id === task.ownerId);
-            const canChangeStatus = editable || task.ownerId === profile.uid;
+            const canChangeStatus = sectionEditable;
             return (
               <Row key={task.id}>
                 <Cell style={{ fontWeight: 800 }}>{task.name}</Cell>
@@ -1323,7 +1529,10 @@ function TasksTab({ profile, project, employees, editable, onUpdateProject }) {
                 </Cell>
                 <Cell style={{ color: T.colors.textMuted }}>{task.note || "-"}</Cell>
                 <Cell>
-                  {editable ? (
+                  <CommentThread comments={task.comments} onAddComment={sectionEditable ? (text) => addComment(task.id, text) : null} placeholder="Task bo'yicha izoh yozing..." />
+                </Cell>
+                <Cell>
+                  {sectionEditable ? (
                     <div style={{ display: "flex", gap: 8 }}>
                       <Button variant="secondary" onClick={() => openForEdit(task)} style={{ padding: "7px 10px" }}>Tahrirlash</Button>
                       <Button variant="danger" onClick={() => deleteTask(task.id)} style={{ padding: "7px 10px" }}>O'chirish</Button>
@@ -1344,19 +1553,21 @@ function TasksTab({ profile, project, employees, editable, onUpdateProject }) {
 }
 
 function ContentPlanTab({ profile, project, employees, editable, onUpdateProject }) {
-  const [draft, setDraft] = useState({ date: "", platform: "Instagram", format: "Post", topic: "", caption: "", ownerId: employees[0]?.id || "", status: "Rejalashtirildi", note: "" });
+  const sectionEditable = canWorkInProject(profile, project);
+  const assignableEmployees = projectMembers(project, employees);
+  const [draft, setDraft] = useState({ date: "", platform: "Instagram", format: "Post", topic: "", caption: "", ownerId: assignableEmployees[0]?.id || "", status: "Rejalashtirildi", note: "", comments: [] });
   const [editingId, setEditingId] = useState("");
 
   function reset() {
-    setDraft({ date: "", platform: "Instagram", format: "Post", topic: "", caption: "", ownerId: employees[0]?.id || "", status: "Rejalashtirildi", note: "" });
+    setDraft({ date: "", platform: "Instagram", format: "Post", topic: "", caption: "", ownerId: assignableEmployees[0]?.id || "", status: "Rejalashtirildi", note: "", comments: [] });
     setEditingId("");
   }
 
   function save() {
     if (!draft.topic.trim()) return;
     const contentPlan = editingId
-      ? project.contentPlan.map((item) => (item.id === editingId ? { ...item, ...draft } : item))
-      : [...project.contentPlan, { ...draft, id: makeId("content") }];
+      ? project.contentPlan.map((item) => (item.id === editingId ? withRecordMeta({ ...item, ...draft }, profile) : item))
+      : [...project.contentPlan, withRecordMeta({ ...draft, id: makeId("content") }, profile)];
     onUpdateProject({ ...project, contentPlan }, { notifyText: "Kontent reja yangilandi", auditText: `Kontent saqlandi: ${draft.topic}`, page: "projects" });
     reset();
   }
@@ -1365,6 +1576,18 @@ function ContentPlanTab({ profile, project, employees, editable, onUpdateProject
     onUpdateProject(
       { ...project, contentPlan: project.contentPlan.map((item) => (item.id === id ? { ...item, status } : item)) },
       { notifyText: "Kontent holati o'zgardi", auditText: `Kontent statusi o'zgardi: ${status}`, page: "projects" }
+    );
+  }
+
+  function addComment(id, text) {
+    onUpdateProject(
+      {
+        ...project,
+        contentPlan: project.contentPlan.map((item) =>
+          item.id === id ? { ...item, comments: [...normalizeComments(item.comments), createComment(text, profile)] } : item
+        ),
+      },
+      { notifyText: "Kontentga izoh qo'shildi", auditText: "Kontentga izoh qo'shildi", page: "projects" }
     );
   }
 
@@ -1377,10 +1600,10 @@ function ContentPlanTab({ profile, project, employees, editable, onUpdateProject
     <Card>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <div style={{ fontSize: 18, fontWeight: 900 }}>Kontent reja</div>
-        {editable ? <Button onClick={reset}>Yangi kontent</Button> : null}
+        {sectionEditable ? <Button onClick={reset}>Yangi kontent</Button> : null}
       </div>
 
-      {editable ? (
+      {sectionEditable ? (
         <Card style={{ background: T.colors.bg, marginBottom: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
             <Field label="Sana" type="date" value={draft.date} onChange={(value) => setDraft((prev) => ({ ...prev, date: value }))} />
@@ -1388,7 +1611,7 @@ function ContentPlanTab({ profile, project, employees, editable, onUpdateProject
             <Field label="Format" value={draft.format} onChange={(value) => setDraft((prev) => ({ ...prev, format: value }))} options={FORMATS} />
             <Field label="Mavzu" value={draft.topic} onChange={(value) => setDraft((prev) => ({ ...prev, topic: value }))} />
             <Field label="Caption" value={draft.caption} onChange={(value) => setDraft((prev) => ({ ...prev, caption: value }))} />
-            <Field label="Mas'ul" value={draft.ownerId} onChange={(value) => setDraft((prev) => ({ ...prev, ownerId: value }))} options={employees.map((employee) => ({ value: employee.id, label: employee.name }))} />
+            <Field label="Mas'ul" value={draft.ownerId} onChange={(value) => setDraft((prev) => ({ ...prev, ownerId: value }))} options={assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))} />
             <Field label="Holat" value={draft.status} onChange={(value) => setDraft((prev) => ({ ...prev, status: value }))} options={CONTENT_STATUSES} />
             <Field label="Izoh" value={draft.note} onChange={(value) => setDraft((prev) => ({ ...prev, note: value }))} />
           </div>
@@ -1400,10 +1623,10 @@ function ContentPlanTab({ profile, project, employees, editable, onUpdateProject
       ) : null}
 
       {project.contentPlan.length ? (
-        <DataTable columns={["Sana", "Platforma", "Format", "Mavzu", "Mas'ul", "Holat", "Izoh", "Amal"]}>
+        <DataTable columns={["Sana", "Platforma", "Format", "Mavzu", "Mas'ul", "Holat", "Izoh", "Komment", "Amal"]}>
           {project.contentPlan.map((item) => {
             const owner = employees.find((employee) => employee.id === item.ownerId);
-            const canChangeStatus = editable || item.ownerId === profile.uid;
+            const canChangeStatus = sectionEditable;
             return (
               <Row key={item.id}>
                 <Cell>{item.date || "-"}</Cell>
@@ -1416,7 +1639,10 @@ function ContentPlanTab({ profile, project, employees, editable, onUpdateProject
                 </Cell>
                 <Cell style={{ color: T.colors.textMuted }}>{item.note || "-"}</Cell>
                 <Cell>
-                  {editable ? (
+                  <CommentThread comments={item.comments} onAddComment={sectionEditable ? (text) => addComment(item.id, text) : null} placeholder="Kontent izohi..." />
+                </Cell>
+                <Cell>
+                  {sectionEditable ? (
                     <div style={{ display: "flex", gap: 8 }}>
                       <Button variant="secondary" onClick={() => { setEditingId(item.id); setDraft({ ...item }); }} style={{ padding: "7px 10px" }}>Tahrirlash</Button>
                       <Button variant="danger" onClick={() => remove(item.id)} style={{ padding: "7px 10px" }}>O'chirish</Button>
@@ -1437,18 +1663,20 @@ function ContentPlanTab({ profile, project, employees, editable, onUpdateProject
 }
 
 function MediaPlanTab({ profile, project, employees, editable, onUpdateProject }) {
-  const [draft, setDraft] = useState({ date: "", type: "Post", platform: "Instagram", format: "Post", ownerId: employees[0]?.id || "", budget: "", status: "Rejalashtirildi", note: "" });
+  const sectionEditable = canWorkInProject(profile, project);
+  const assignableEmployees = projectMembers(project, employees);
+  const [draft, setDraft] = useState({ date: "", type: "Post", platform: "Instagram", format: "Post", ownerId: assignableEmployees[0]?.id || "", budget: "", status: "Rejalashtirildi", note: "", comments: [] });
   const [editingId, setEditingId] = useState("");
 
   function reset() {
-    setDraft({ date: "", type: "Post", platform: "Instagram", format: "Post", ownerId: employees[0]?.id || "", budget: "", status: "Rejalashtirildi", note: "" });
+    setDraft({ date: "", type: "Post", platform: "Instagram", format: "Post", ownerId: assignableEmployees[0]?.id || "", budget: "", status: "Rejalashtirildi", note: "", comments: [] });
     setEditingId("");
   }
 
   function save() {
     const mediaPlan = editingId
-      ? project.mediaPlan.map((item) => (item.id === editingId ? { ...item, ...draft, budget: Number(draft.budget || 0) } : item))
-      : [...project.mediaPlan, { ...draft, id: makeId("media"), budget: Number(draft.budget || 0) }];
+      ? project.mediaPlan.map((item) => (item.id === editingId ? withRecordMeta({ ...item, ...draft, budget: Number(draft.budget || 0) }, profile) : item))
+      : [...project.mediaPlan, withRecordMeta({ ...draft, id: makeId("media"), budget: Number(draft.budget || 0) }, profile)];
     onUpdateProject({ ...project, mediaPlan }, { notifyText: "Media plan yangilandi", auditText: "Media plan saqlandi", page: "projects" });
     reset();
   }
@@ -1457,6 +1685,18 @@ function MediaPlanTab({ profile, project, employees, editable, onUpdateProject }
     onUpdateProject(
       { ...project, mediaPlan: project.mediaPlan.map((item) => (item.id === id ? { ...item, status } : item)) },
       { notifyText: "Media plan holati o'zgardi", auditText: `Media plan statusi o'zgardi: ${status}`, page: "projects" }
+    );
+  }
+
+  function addComment(id, text) {
+    onUpdateProject(
+      {
+        ...project,
+        mediaPlan: project.mediaPlan.map((item) =>
+          item.id === id ? { ...item, comments: [...normalizeComments(item.comments), createComment(text, profile)] } : item
+        ),
+      },
+      { notifyText: "Mediaplan izohi qo'shildi", auditText: "Mediaplan izohi qo'shildi", page: "projects" }
     );
   }
 
@@ -1469,17 +1709,17 @@ function MediaPlanTab({ profile, project, employees, editable, onUpdateProject }
     <Card>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <div style={{ fontSize: 18, fontWeight: 900 }}>Media plan</div>
-        {editable ? <Button onClick={reset}>Yangi yozuv</Button> : null}
+        {sectionEditable ? <Button onClick={reset}>Yangi yozuv</Button> : null}
       </div>
 
-      {editable ? (
+      {sectionEditable ? (
         <Card style={{ background: T.colors.bg, marginBottom: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
             <Field label="Sana" type="date" value={draft.date} onChange={(value) => setDraft((prev) => ({ ...prev, date: value }))} />
             <Field label="Tur" value={draft.type} onChange={(value) => setDraft((prev) => ({ ...prev, type: value }))} options={FORMATS} />
             <Field label="Platforma" value={draft.platform} onChange={(value) => setDraft((prev) => ({ ...prev, platform: value }))} options={PLATFORMS} />
             <Field label="Format" value={draft.format} onChange={(value) => setDraft((prev) => ({ ...prev, format: value }))} options={FORMATS} />
-            <Field label="Mas'ul" value={draft.ownerId} onChange={(value) => setDraft((prev) => ({ ...prev, ownerId: value }))} options={employees.map((employee) => ({ value: employee.id, label: employee.name }))} />
+            <Field label="Mas'ul" value={draft.ownerId} onChange={(value) => setDraft((prev) => ({ ...prev, ownerId: value }))} options={assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))} />
             <Field label="Byudjet" type="number" value={draft.budget} onChange={(value) => setDraft((prev) => ({ ...prev, budget: value }))} />
             <Field label="Holat" value={draft.status} onChange={(value) => setDraft((prev) => ({ ...prev, status: value }))} options={PLAN_STATUSES} />
             <Field label="Izoh" value={draft.note} onChange={(value) => setDraft((prev) => ({ ...prev, note: value }))} />
@@ -1492,10 +1732,10 @@ function MediaPlanTab({ profile, project, employees, editable, onUpdateProject }
       ) : null}
 
       {project.mediaPlan.length ? (
-        <DataTable columns={["Sana", "Tur", "Platforma", "Mas'ul", "Byudjet", "Holat", "Izoh", "Amal"]}>
+        <DataTable columns={["Sana", "Tur", "Platforma", "Mas'ul", "Byudjet", "Holat", "Izoh", "Komment", "Amal"]}>
           {project.mediaPlan.map((item) => {
             const owner = employees.find((employee) => employee.id === item.ownerId);
-            const canChangeStatus = editable || item.ownerId === profile.uid;
+            const canChangeStatus = sectionEditable;
             return (
               <Row key={item.id}>
                 <Cell>{item.date || "-"}</Cell>
@@ -1508,7 +1748,10 @@ function MediaPlanTab({ profile, project, employees, editable, onUpdateProject }
                 </Cell>
                 <Cell style={{ color: T.colors.textMuted }}>{item.note || "-"}</Cell>
                 <Cell>
-                  {editable ? (
+                  <CommentThread comments={item.comments} onAddComment={sectionEditable ? (text) => addComment(item.id, text) : null} placeholder="Mediaplan izohi..." />
+                </Cell>
+                <Cell>
+                  {sectionEditable ? (
                     <div style={{ display: "flex", gap: 8 }}>
                       <Button variant="secondary" onClick={() => { setEditingId(item.id); setDraft({ ...item, budget: String(item.budget || "") }); }} style={{ padding: "7px 10px" }}>Tahrirlash</Button>
                       <Button variant="danger" onClick={() => remove(item.id)} style={{ padding: "7px 10px" }}>O'chirish</Button>
@@ -1528,22 +1771,23 @@ function MediaPlanTab({ profile, project, employees, editable, onUpdateProject }
   );
 }
 
-function PlansTab({ project, editable, onUpdateProject }) {
+function PlansTab({ profile, project, editable, onUpdateProject }) {
+  const sectionEditable = canWorkInProject(profile, project);
   const [planType, setPlanType] = useState("daily");
-  const [draft, setDraft] = useState({ title: "", status: "Rejalashtirildi", taskId: "", note: "", date: "", week: "", month: "" });
+  const [draft, setDraft] = useState({ title: "", status: "Rejalashtirildi", taskId: "", note: "", date: "", week: "", month: "", comments: [] });
   const [editingId, setEditingId] = useState("");
   const currentItems = project.plans?.[planType] || [];
 
   function reset() {
-    setDraft({ title: "", status: "Rejalashtirildi", taskId: "", note: "", date: "", week: "", month: "" });
+    setDraft({ title: "", status: "Rejalashtirildi", taskId: "", note: "", date: "", week: "", month: "", comments: [] });
     setEditingId("");
   }
 
   function save() {
     if (!draft.title.trim()) return;
     const list = editingId
-      ? currentItems.map((item) => (item.id === editingId ? { ...item, ...draft } : item))
-      : [...currentItems, { ...draft, id: makeId("plan") }];
+      ? currentItems.map((item) => (item.id === editingId ? withRecordMeta({ ...item, ...draft }, profile) : item))
+      : [...currentItems, withRecordMeta({ ...draft, id: makeId("plan") }, profile)];
     onUpdateProject(
       { ...project, plans: { ...project.plans, [planType]: list } },
       { notifyText: "Reja yangilandi", auditText: `Reja saqlandi: ${draft.title}`, page: "projects" }
@@ -1555,6 +1799,21 @@ function PlansTab({ project, editable, onUpdateProject }) {
     onUpdateProject(
       { ...project, plans: { ...project.plans, [planType]: currentItems.map((item) => (item.id === id ? { ...item, status } : item)) } },
       { notifyText: "Reja holati o'zgardi", auditText: `Reja statusi o'zgardi: ${status}`, page: "projects" }
+    );
+  }
+
+  function addComment(id, text) {
+    onUpdateProject(
+      {
+        ...project,
+        plans: {
+          ...project.plans,
+          [planType]: currentItems.map((item) =>
+            item.id === id ? { ...item, comments: [...normalizeComments(item.comments), createComment(text, profile)] } : item
+          ),
+        },
+      },
+      { notifyText: "Rejaga izoh qo'shildi", auditText: "Rejaga izoh qo'shildi", page: "projects" }
     );
   }
 
@@ -1580,10 +1839,10 @@ function PlansTab({ project, editable, onUpdateProject }) {
             </Button>
           ))}
         </div>
-        {editable ? <Button onClick={reset}>Yangi reja</Button> : null}
+        {sectionEditable ? <Button onClick={reset}>Yangi reja</Button> : null}
       </div>
 
-      {editable ? (
+      {sectionEditable ? (
         <Card style={{ background: T.colors.bg, marginBottom: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
             {planType === "daily" ? <Field label="Sana" type="date" value={draft.date} onChange={(value) => setDraft((prev) => ({ ...prev, date: value }))} /> : null}
@@ -1617,10 +1876,13 @@ function PlansTab({ project, editable, onUpdateProject }) {
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                    <StatusSelect value={item.status} options={PLAN_STATUSES} onChange={editable ? (status) => updateStatus(item.id, status) : null} disabled={!editable} />
-                    {editable ? <Button variant="secondary" onClick={() => { setEditingId(item.id); setDraft({ ...item }); }} style={{ padding: "7px 10px" }}>Tahrirlash</Button> : null}
-                    {editable ? <Button variant="danger" onClick={() => remove(item.id)} style={{ padding: "7px 10px" }}>O'chirish</Button> : null}
+                    <StatusSelect value={item.status} options={PLAN_STATUSES} onChange={sectionEditable ? (status) => updateStatus(item.id, status) : null} disabled={!sectionEditable} />
+                    {sectionEditable ? <Button variant="secondary" onClick={() => { setEditingId(item.id); setDraft({ ...item }); }} style={{ padding: "7px 10px" }}>Tahrirlash</Button> : null}
+                    {sectionEditable ? <Button variant="danger" onClick={() => remove(item.id)} style={{ padding: "7px 10px" }}>O'chirish</Button> : null}
                   </div>
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  <CommentThread comments={item.comments} onAddComment={sectionEditable ? (text) => addComment(item.id, text) : null} placeholder="Reja bo'yicha izoh..." />
                 </div>
               </Card>
             );
@@ -1633,14 +1895,43 @@ function PlansTab({ project, editable, onUpdateProject }) {
   );
 }
 
-function CallsTab({ project, employees, editable, onUpdateProject }) {
-  const [draft, setDraft] = useState({ date: "", type: "Call", whoId: employees[0]?.id || "", result: "", next: "" });
+function CallsTab({ profile, project, employees, editable, onUpdateProject }) {
+  const sectionEditable = canWorkInProject(profile, project);
+  const assignableEmployees = projectMembers(project, employees);
+  const [editingId, setEditingId] = useState("");
+  const [draft, setDraft] = useState({ date: "", type: "Call", whoId: assignableEmployees[0]?.id || "", result: "", next: "", status: "Yangi", comments: [] });
+
+  function reset() {
+    setEditingId("");
+    setDraft({ date: "", type: "Call", whoId: assignableEmployees[0]?.id || "", result: "", next: "", status: "Yangi", comments: [] });
+  }
 
   function save() {
     if (!draft.date && !draft.result && !draft.next) return;
-    const calls = [...project.calls, { ...draft, id: makeId("call") }];
+    const calls = editingId
+      ? project.calls.map((item) => (item.id === editingId ? withRecordMeta({ ...item, ...draft }, profile) : item))
+      : [...project.calls, withRecordMeta({ ...draft, id: makeId("call") }, profile)];
     onUpdateProject({ ...project, calls }, { notifyText: "Mijoz bilan aloqa saqlandi", auditText: "Mijoz bilan aloqa saqlandi", page: "projects" });
-    setDraft({ date: "", type: "Call", whoId: employees[0]?.id || "", result: "", next: "" });
+    reset();
+  }
+
+  function updateStatus(id, status) {
+    onUpdateProject(
+      { ...project, calls: project.calls.map((item) => (item.id === id ? { ...item, status } : item)) },
+      { notifyText: "Aloqa holati yangilandi", auditText: `Aloqa statusi o'zgardi: ${status}`, page: "projects" }
+    );
+  }
+
+  function addComment(id, text) {
+    onUpdateProject(
+      {
+        ...project,
+        calls: project.calls.map((item) =>
+          item.id === id ? { ...item, comments: [...normalizeComments(item.comments), createComment(text, profile)] } : item
+        ),
+      },
+      { notifyText: "Aloqaga izoh qo'shildi", auditText: "Aloqaga izoh qo'shildi", page: "projects" }
+    );
   }
 
   function remove(id) {
@@ -1650,18 +1941,23 @@ function CallsTab({ project, employees, editable, onUpdateProject }) {
 
   return (
     <Card>
-      <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 16 }}>Mijoz bilan aloqalar</div>
-      {editable ? (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
+        <div style={{ fontSize: 18, fontWeight: 900 }}>Mijoz bilan aloqalar</div>
+        {sectionEditable ? <Button onClick={reset}>Yangi aloqa</Button> : null}
+      </div>
+      {sectionEditable ? (
         <Card style={{ background: T.colors.bg, marginBottom: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
             <Field label="Sana" type="date" value={draft.date} onChange={(value) => setDraft((prev) => ({ ...prev, date: value }))} />
             <Field label="Tur" value={draft.type} onChange={(value) => setDraft((prev) => ({ ...prev, type: value }))} options={["Call", "Meeting"]} />
-            <Field label="Kim gaplashdi" value={draft.whoId} onChange={(value) => setDraft((prev) => ({ ...prev, whoId: value }))} options={employees.map((employee) => ({ value: employee.id, label: employee.name }))} />
+            <Field label="Kim gaplashdi" value={draft.whoId} onChange={(value) => setDraft((prev) => ({ ...prev, whoId: value }))} options={assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))} />
             <Field label="Natija" value={draft.result} onChange={(value) => setDraft((prev) => ({ ...prev, result: value }))} />
             <Field label="Keyingi qadam" value={draft.next} onChange={(value) => setDraft((prev) => ({ ...prev, next: value }))} />
+            <Field label="Holat" value={draft.status} onChange={(value) => setDraft((prev) => ({ ...prev, status: value }))} options={CALL_STATUSES} />
           </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
-            <Button onClick={save}>Qo'shish</Button>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
+            {editingId ? <Button variant="secondary" onClick={reset}>Bekor</Button> : null}
+            <Button onClick={save}>{editingId ? "Yangilash" : "Qo'shish"}</Button>
           </div>
         </Card>
       ) : null}
@@ -1680,7 +1976,18 @@ function CallsTab({ project, employees, editable, onUpdateProject }) {
                     {item.result ? <div style={{ marginTop: 8, color: T.colors.textMuted }}>Natija: {item.result}</div> : null}
                     {item.next ? <div style={{ marginTop: 4, color: T.colors.accent, fontWeight: 700 }}>Keyingi qadam: {item.next}</div> : null}
                   </div>
-                  {editable ? <Button variant="danger" onClick={() => remove(item.id)} style={{ padding: "7px 10px" }}>O'chirish</Button> : null}
+                  <div style={{ display: "grid", gap: 8, justifyItems: "end" }}>
+                    <StatusSelect value={item.status || "Yangi"} options={CALL_STATUSES} onChange={sectionEditable ? (status) => updateStatus(item.id, status) : null} disabled={!sectionEditable} />
+                    {sectionEditable ? (
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <Button variant="secondary" onClick={() => { setEditingId(item.id); setDraft({ ...item }); }} style={{ padding: "7px 10px" }}>Tahrirlash</Button>
+                        <Button variant="danger" onClick={() => remove(item.id)} style={{ padding: "7px 10px" }}>O'chirish</Button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  <CommentThread comments={item.comments} onAddComment={sectionEditable ? (text) => addComment(item.id, text) : null} placeholder="Aloqa bo'yicha izoh..." />
                 </div>
               </Card>
             );
@@ -1696,7 +2003,8 @@ function CallsTab({ project, employees, editable, onUpdateProject }) {
 function ProjectDetailPage({ profile, project, employees, onBack, onSaveProject, onDeleteProject }) {
   const [tab, setTab] = useState("tasks");
   const [editingProject, setEditingProject] = useState(false);
-  const editable = canEdit(profile.role);
+  const editable = canManageProjectMeta(profile);
+  const sectionEditable = canWorkInProject(profile, project);
   const progress = calcProjectProgress(project);
   const manager = employees.find((employee) => employee.id === project.managerId);
   const progressColor = progress >= 75 ? T.colors.green : progress >= 40 ? T.colors.accent : T.colors.orange;
@@ -1728,6 +2036,7 @@ function ProjectDetailPage({ profile, project, employees, onBack, onSaveProject,
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", color: T.colors.textSecondary, fontSize: 12 }}>
               <span>📅 {project.start || "-"} → {project.end || "-"}</span>
               <span>👥 {project.teamIds.length} kishi</span>
+              {profile.role === "EMPLOYEE" ? <span>• Siz bu loyiha workspace ichida ishlay olasiz</span> : null}
             </div>
             {project.teamIds.length ? (
               <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -1789,11 +2098,11 @@ function ProjectDetailPage({ profile, project, employees, onBack, onSaveProject,
         ))}
       </div>
 
-      {tab === "tasks" ? <TasksTab profile={profile} project={project} employees={employees} editable={editable} onUpdateProject={onSaveProject} /> : null}
-      {tab === "content" ? <ContentPlanTab profile={profile} project={project} employees={employees} editable={editable} onUpdateProject={onSaveProject} /> : null}
-      {tab === "media" ? <MediaPlanTab profile={profile} project={project} employees={employees} editable={editable} onUpdateProject={onSaveProject} /> : null}
-      {tab === "plans" ? <PlansTab project={project} editable={editable} onUpdateProject={onSaveProject} /> : null}
-      {tab === "calls" ? <CallsTab project={project} employees={employees} editable={editable} onUpdateProject={onSaveProject} /> : null}
+      {tab === "tasks" ? <TasksTab profile={profile} project={project} employees={employees} editable={sectionEditable} onUpdateProject={onSaveProject} /> : null}
+      {tab === "content" ? <ContentPlanTab profile={profile} project={project} employees={employees} editable={sectionEditable} onUpdateProject={onSaveProject} /> : null}
+      {tab === "media" ? <MediaPlanTab profile={profile} project={project} employees={employees} editable={sectionEditable} onUpdateProject={onSaveProject} /> : null}
+      {tab === "plans" ? <PlansTab profile={profile} project={project} editable={sectionEditable} onUpdateProject={onSaveProject} /> : null}
+      {tab === "calls" ? <CallsTab profile={profile} project={project} employees={employees} editable={sectionEditable} onUpdateProject={onSaveProject} /> : null}
       {tab === "report" && canViewReports(profile.role) ? (
         <ReportEditor
           project={project}
@@ -2060,68 +2369,140 @@ function EmployeeEditForm({ employee, onCancel, onSave, submitLabel = "Saqlash" 
 }
 
 function ShootingPage({ profile, shoots, projects, employees, onSaveShoot, onDeleteShoot }) {
-  const editable = canEdit(profile.role);
-  const [draft, setDraft] = useState({ date: "", projectId: projects[0]?.id || "", type: "", location: "", operatorId: employees[0]?.id || "", goal: "", status: "Rejalashtirildi" });
+  const sectionEditable = profile.role !== "INVESTOR" && projects.length > 0;
+  const [editingId, setEditingId] = useState("");
+  const [draft, setDraft] = useState({
+    date: "",
+    time: "",
+    projectId: projects[0]?.id || "",
+    type: "",
+    location: "",
+    operatorId: employees[0]?.id || "",
+    goal: "",
+    note: "",
+    status: "Yangi",
+    comments: [],
+  });
+
+  const sortedShoots = useMemo(
+    () => [...shoots].sort((a, b) => `${a.date || ""} ${a.time || ""}`.localeCompare(`${b.date || ""} ${b.time || ""}`)),
+    [shoots]
+  );
+  const groupedShoots = useMemo(
+    () =>
+      sortedShoots.reduce((acc, shoot) => {
+        const key = shoot.date || "Sana ko'rsatilmagan";
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(shoot);
+        return acc;
+      }, {}),
+    [sortedShoots]
+  );
 
   function reset() {
-    setDraft({ date: "", projectId: projects[0]?.id || "", type: "", location: "", operatorId: employees[0]?.id || "", goal: "", status: "Rejalashtirildi" });
+    setEditingId("");
+    setDraft({
+      date: "",
+      time: "",
+      projectId: projects[0]?.id || "",
+      type: "",
+      location: "",
+      operatorId: employees[0]?.id || "",
+      goal: "",
+      note: "",
+      status: "Yangi",
+      comments: [],
+    });
+  }
+
+  function save() {
+    if (!draft.projectId || !draft.type.trim()) return;
+    onSaveShoot(editingId ? { ...draft, id: editingId } : draft);
+    reset();
+  }
+
+  function addComment(shoot, text) {
+    onSaveShoot({ ...shoot, comments: [...normalizeComments(shoot.comments), createComment(text, profile)] });
   }
 
   return (
     <div>
-      <PageHeader title="Syomka kalendari" subtitle="Syomka vazifalari va statuslari saqlanadigan bo'lim." />
+      <PageHeader title="Syomka kalendari" subtitle="Biriktirilgan loyihalar bo'yicha syomka eventlari realtime ishlaydi." />
 
-      {editable ? (
+      {sectionEditable ? (
         <Card style={{ background: T.colors.bg, marginBottom: 18 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
             <Field label="Sana" type="date" value={draft.date} onChange={(value) => setDraft((prev) => ({ ...prev, date: value }))} />
+            <Field label="Vaqt" type="time" value={draft.time} onChange={(value) => setDraft((prev) => ({ ...prev, time: value }))} />
             <Field label="Loyiha" value={draft.projectId} onChange={(value) => setDraft((prev) => ({ ...prev, projectId: value }))} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
-            <Field label="Tur" value={draft.type} onChange={(value) => setDraft((prev) => ({ ...prev, type: value }))} />
+            <Field label="Tur" value={draft.type} onChange={(value) => setDraft((prev) => ({ ...prev, type: value }))} placeholder="Reels, product, backstage..." />
             <Field label="Lokatsiya" value={draft.location} onChange={(value) => setDraft((prev) => ({ ...prev, location: value }))} />
-            <Field label="Operator" value={draft.operatorId} onChange={(value) => setDraft((prev) => ({ ...prev, operatorId: value }))} options={employees.map((employee) => ({ value: employee.id, label: employee.name }))} />
+            <Field label="Mas'ul xodim" value={draft.operatorId} onChange={(value) => setDraft((prev) => ({ ...prev, operatorId: value }))} options={employees.map((employee) => ({ value: employee.id, label: employee.name }))} />
             <Field label="Maqsad" value={draft.goal} onChange={(value) => setDraft((prev) => ({ ...prev, goal: value }))} />
-            <Field label="Holat" value={draft.status} onChange={(value) => setDraft((prev) => ({ ...prev, status: value }))} options={PLAN_STATUSES} />
+            <Field label="Holat" value={draft.status} onChange={(value) => setDraft((prev) => ({ ...prev, status: value }))} options={SHOOT_STATUSES} />
+            <Field label="Qisqa izoh" value={draft.note} onChange={(value) => setDraft((prev) => ({ ...prev, note: value }))} />
           </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
-            <Button onClick={() => { onSaveShoot(draft); reset(); }}>Syomka qo'shish</Button>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
+            {editingId ? <Button variant="secondary" onClick={reset}>Bekor</Button> : null}
+            <Button onClick={save}>{editingId ? "Syomkani yangilash" : "Syomka qo'shish"}</Button>
           </div>
         </Card>
       ) : null}
 
-      {shoots.length ? (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 14 }}>
-          {shoots.map((shoot) => {
-            const project = projects.find((item) => item.id === shoot.projectId);
-            const operator = employees.find((item) => item.id === shoot.operatorId);
-            const canChangeStatus = editable || shoot.operatorId === profile.uid;
-            return (
-              <Card key={shoot.id}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                  <div>
-                    <div style={{ fontWeight: 900 }}>{shoot.type || "Syomka turi"}</div>
-                    <div style={{ marginTop: 6, color: T.colors.textMuted, fontSize: 13 }}>{project?.name || "Loyiha tanlanmagan"}</div>
-                  </div>
-                  {canChangeStatus ? (
-                    <StatusSelect value={shoot.status} options={PLAN_STATUSES} onChange={(status) => onSaveShoot({ ...shoot, status })} />
-                  ) : (
-                    <StatusBadge value={shoot.status} />
-                  )}
+      {sortedShoots.length ? (
+        <div style={{ display: "grid", gap: 18 }}>
+          {Object.entries(groupedShoots).map(([date, items]) => (
+            <Card key={date} style={{ padding: 18 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 900 }}>{date}</div>
+                  <div style={{ marginTop: 4, color: T.colors.textSecondary, fontSize: 12 }}>{items.length} ta syomka eventi</div>
                 </div>
-                <div style={{ marginTop: 14, fontSize: 13, lineHeight: 1.8 }}>
-                  Sana: {shoot.date || "-"}<br />
-                  Lokatsiya: {shoot.location || "-"}<br />
-                  Maqsad: {shoot.goal || "-"}
-                </div>
-                <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.colors.textMuted }}>
-                    {operator ? <Avatar name={operator.name} url={operator.avatarUrl} size={24} /> : null}
-                    <span style={{ fontSize: 12 }}>{operator?.name || "Operator yo'q"}</span>
-                  </div>
-                  {editable ? <Button variant="danger" onClick={() => onDeleteShoot(shoot.id)} style={{ padding: "7px 10px" }}>O'chirish</Button> : null}
-                </div>
-              </Card>
-            );
-          })}
+                <div style={{ width: 14, height: 14, borderRadius: "50%", background: T.colors.accent }} />
+              </div>
+              <div style={{ display: "grid", gap: 12 }}>
+                {items.map((shoot) => {
+                  const project = projects.find((item) => item.id === shoot.projectId);
+                  const operator = employees.find((item) => item.id === shoot.operatorId);
+                  const canMutate = canEdit(profile.role) || Boolean(project);
+                  return (
+                    <Card key={shoot.id} style={{ background: "#fff", padding: 16 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                            <div style={{ fontWeight: 900 }}>{shoot.type || "Syomka turi"}</div>
+                            <StatusSelect value={shoot.status || "Yangi"} options={SHOOT_STATUSES} onChange={canMutate ? (status) => onSaveShoot({ ...shoot, status }) : null} disabled={!canMutate} />
+                          </div>
+                          <div style={{ marginTop: 6, color: T.colors.textMuted, fontSize: 13 }}>
+                            {project?.name || "Loyiha tanlanmagan"} · {shoot.time || "--:--"} · {shoot.location || "Lokatsiya yo'q"}
+                          </div>
+                          <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.7 }}>
+                            Maqsad: {shoot.goal || "-"}<br />
+                            Izoh: {shoot.note || "-"}
+                          </div>
+                        </div>
+                        <div style={{ display: "grid", gap: 8, justifyItems: "end" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.colors.textMuted }}>
+                            {operator ? <Avatar name={operator.name} url={operator.avatarUrl} size={24} /> : null}
+                            <span style={{ fontSize: 12 }}>{operator?.name || "Mas'ul yo'q"}</span>
+                          </div>
+                          {canMutate ? (
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <Button variant="secondary" onClick={() => { setEditingId(shoot.id); setDraft({ ...shoot, comments: normalizeComments(shoot.comments) }); }} style={{ padding: "7px 10px" }}>Tahrirlash</Button>
+                              <Button variant="danger" onClick={() => onDeleteShoot(shoot.id)} style={{ padding: "7px 10px" }}>O'chirish</Button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div style={{ marginTop: 12 }}>
+                        <CommentThread comments={shoot.comments} onAddComment={canMutate ? (text) => addComment(shoot, text) : null} placeholder="Syomka bo'yicha izoh..." />
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            </Card>
+          ))}
         </div>
       ) : (
         <EmptyState title="Syomka yozuvlari yo'q" desc="Syomka kalendari shu yerda yuritiladi." />
@@ -2279,21 +2660,51 @@ function WorkflowPage() {
   );
 }
 
-function ChatPage({ profile, employees, messages, onSendMessage }) {
+function ChatPage({ profile, employees, messages, onSendMessage, onEditMessage, onMarkRead }) {
   const [input, setInput] = useState("");
+  const [editingId, setEditingId] = useState("");
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const viewportRef = useRef(null);
   const endRef = useRef(null);
-  const sortedMessages = sortByRecent(messages, "createdAt").reverse();
-  const quickReactions = ["👍", "🔥", "✅", "👏", "🎯", "🚀"];
+  const sortedMessages = useMemo(() => sortByRecent(messages, "createdAt").reverse(), [messages]);
+  const employeeMap = useMemo(() => Object.fromEntries(employees.map((employee) => [employee.id, employee])), [employees]);
+  const quickReactions = ["👍", "🔥", "✅", "👏", "🎯", "🚀", "💡", "📌"];
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    onMarkRead?.();
+  }, [messages.length, profile.uid]);
+
+  useEffect(() => {
+    if (!isAtBottom) return;
+    const frame = window.requestAnimationFrame(() => {
+      endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [sortedMessages, isAtBottom]);
+
+  function handleScroll() {
+    if (!viewportRef.current) return;
+    const distance = viewportRef.current.scrollHeight - viewportRef.current.scrollTop - viewportRef.current.clientHeight;
+    setIsAtBottom(distance < 80);
+  }
+
+  function insertEmoji(emoji) {
+    setInput((prev) => `${prev}${emoji}`);
+  }
 
   function send() {
     const text = input.trim();
     if (!text) return;
-    onSendMessage(text);
+    if (editingId) {
+      onEditMessage?.(editingId, text);
+      setEditingId("");
+    } else {
+      onSendMessage(text);
+    }
     setInput("");
+    setShowEmojiPicker(false);
+    setIsAtBottom(true);
   }
 
   return (
@@ -2306,16 +2717,17 @@ function ChatPage({ profile, employees, messages, onSendMessage }) {
             <div style={{ marginTop: 2, color: T.colors.textSecondary, fontSize: 12 }}>{employees.length} foydalanuvchi · {sortedMessages.length} ta xabar</div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <span style={{ background: T.colors.borderLight, borderRadius: T.radius.full, padding: "6px 10px", fontSize: 12, color: T.colors.textSecondary }}>🙂 Memojis</span>
-            <span style={{ background: T.colors.borderLight, borderRadius: T.radius.full, padding: "6px 10px", fontSize: 12, color: T.colors.textSecondary }}>🫧 Sticker</span>
+            <span style={{ background: T.colors.borderLight, borderRadius: T.radius.full, padding: "6px 10px", fontSize: 12, color: T.colors.textSecondary }}>⚡ Realtime</span>
+            <span style={{ background: T.colors.borderLight, borderRadius: T.radius.full, padding: "6px 10px", fontSize: 12, color: T.colors.textSecondary }}>🙂 Emoji</span>
           </div>
         </div>
 
-        <div style={{ flex: 1, overflowY: "auto", padding: T.space.xl, display: "flex", flexDirection: "column", gap: 14, background: "linear-gradient(180deg, #ffffff 0%, #fafafe 100%)" }}>
+        <div ref={viewportRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: T.space.xl, display: "flex", flexDirection: "column", gap: 14, background: "linear-gradient(180deg, #ffffff 0%, #fafafe 100%)" }}>
           {sortedMessages.length ? (
             sortedMessages.map((message) => {
-              const author = employees.find((employee) => employee.id === message.userId) || { name: message.authorName || "Noma'lum" };
+              const author = employeeMap[message.userId] || { name: message.authorName || "Noma'lum" };
               const mine = message.userId === profile.uid;
+              const seenByOthers = Object.keys(message.readBy || {}).some((userId) => userId !== message.userId);
               return (
                 <div key={message.id} style={{ display: "flex", gap: 10, alignItems: "flex-end", justifyContent: mine ? "flex-end" : "flex-start", flexDirection: mine ? "row-reverse" : "row" }}>
                   {!mine ? <Avatar name={author.name} url={author.avatarUrl} size={30} /> : null}
@@ -2329,25 +2741,40 @@ function ChatPage({ profile, employees, messages, onSendMessage }) {
                         borderRadius: mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
                         lineHeight: 1.6,
                         boxShadow: mine ? "0 10px 24px rgba(0,113,227,0.16)" : "none",
+                        whiteSpace: "pre-wrap",
                       }}
                     >
                       {message.text}
                     </div>
                     <div style={{ marginTop: 4, display: "flex", alignItems: "center", justifyContent: mine ? "flex-end" : "flex-start", gap: 8 }}>
-                      <div style={{ fontSize: 10, color: T.colors.textTertiary, textAlign: mine ? "right" : "left" }}>
+                      <div style={{ fontSize: 10, color: T.colors.textTertiary, textAlign: mine ? "right" : "left", display: "flex", gap: 8, flexWrap: "wrap" }}>
                         {String(message.createdAt || "").slice(0, 16).replace("T", " ")}
+                        {message.editedAt ? <span>Tahrirlangan</span> : null}
+                        {mine ? <span>{seenByOthers ? "Ko'rildi" : "Yuborildi"}</span> : null}
                       </div>
                       <div style={{ display: "inline-flex", gap: 4 }}>
                         {quickReactions.slice(0, 2).map((emoji) => (
                           <button
                             key={`${message.id}_${emoji}`}
                             type="button"
-                            onClick={() => setInput((prev) => `${prev}${prev ? " " : ""}${emoji}`)}
+                            onClick={() => insertEmoji(emoji)}
                             style={{ border: "none", background: T.colors.borderLight, borderRadius: T.radius.full, width: 22, height: 22, cursor: "pointer", fontSize: 11 }}
                           >
                             {emoji}
                           </button>
                         ))}
+                        {mine ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingId(message.id);
+                              setInput(message.text);
+                            }}
+                            style={{ border: "none", background: "transparent", color: T.colors.textTertiary, cursor: "pointer", fontSize: 11, padding: "0 2px" }}
+                          >
+                            Tahrirlash
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -2360,13 +2787,14 @@ function ChatPage({ profile, employees, messages, onSendMessage }) {
           <div ref={endRef} />
         </div>
 
-        <div style={{ borderTop: `1px solid ${T.colors.border}`, padding: 16, display: "flex", gap: 10, flexWrap: "wrap", background: T.colors.surface }}>
+        <div style={{ borderTop: `1px solid ${T.colors.border}`, padding: 16, display: "flex", gap: 10, flexWrap: "wrap", background: T.colors.surface, position: "relative" }}>
+          {showEmojiPicker ? <EmojiPicker onSelect={insertEmoji} onClose={() => setShowEmojiPicker(false)} /> : null}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", width: "100%" }}>
             {quickReactions.map((emoji) => (
               <button
                 key={emoji}
                 type="button"
-                onClick={() => setInput((prev) => `${prev}${prev ? " " : ""}${emoji}`)}
+                onClick={() => insertEmoji(emoji)}
                 style={{
                   border: "none",
                   borderRadius: T.radius.full,
@@ -2389,14 +2817,15 @@ function ChatPage({ profile, employees, messages, onSendMessage }) {
                 send();
               }
             }}
-            placeholder="Xabar yozing... (Enter yuboradi)"
-            style={{ flex: 1, minHeight: 44, maxHeight: 140, resize: "vertical", border: `1.5px solid ${T.colors.border}`, borderRadius: T.radius.lg, padding: "10px 14px", fontFamily: T.font, fontSize: 14, background: T.colors.bg }}
+            placeholder={editingId ? "Xabarni tahrirlash..." : "Xabar yozing... (Enter yuboradi)"}
+            style={{ flex: 1, minHeight: 44, maxHeight: 140, resize: "vertical", border: `1.5px solid ${editingId ? T.colors.accent : T.colors.border}`, borderRadius: T.radius.lg, padding: "10px 14px", fontFamily: T.font, fontSize: 14, background: T.colors.bg }}
           />
           <div style={{ display: "flex", gap: 8, alignSelf: "flex-end" }}>
-            <Button variant="secondary" onClick={() => setInput((prev) => `${prev}${prev ? " " : ""}🙂`)} style={{ padding: "10px 12px" }}>
+            <Button variant="secondary" onClick={() => setShowEmojiPicker((prev) => !prev)} style={{ padding: "10px 12px" }}>
               🙂
             </Button>
-            <Button onClick={send} style={{ alignSelf: "flex-end", padding: "10px 18px" }}>Yuborish</Button>
+            {editingId ? <Button variant="secondary" onClick={() => { setEditingId(""); setInput(""); }} style={{ alignSelf: "flex-end", padding: "10px 12px" }}>Bekor</Button> : null}
+            <Button onClick={send} style={{ alignSelf: "flex-end", padding: "10px 18px" }}>{editingId ? "Saqlash" : "Yuborish"}</Button>
           </div>
         </div>
       </Card>
@@ -2443,10 +2872,19 @@ function NotificationsPage({ notifications, profile, onMarkAllRead }) {
 function LoadingScreen({ label = "Yuklanmoqda..." }) {
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #f5f5f7 0%, #e8f0fe 100%)", fontFamily: T.font, color: T.colors.text }}>
-      <Card style={{ textAlign: "center", maxWidth: 360, padding: 28 }}>
-        <div style={{ width: 42, height: 42, borderRadius: "50%", border: `4px solid ${T.colors.accentSoft}`, borderTopColor: T.colors.accent, margin: "0 auto", animation: "spin 1s linear infinite" }} />
+      <Card style={{ textAlign: "center", maxWidth: 380, padding: 30, position: "relative", overflow: "hidden" }}>
+        <div style={{ position: "relative", width: 56, height: 56, margin: "0 auto" }}>
+          <div style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "conic-gradient(from 120deg, rgba(0,113,227,0.08), rgba(0,113,227,0.92), rgba(90,200,250,0.16), rgba(0,113,227,0.08))", animation: "appleSpin 1.15s cubic-bezier(.55,.08,.48,.95) infinite" }} />
+          <div style={{ position: "absolute", inset: 6, borderRadius: "50%", background: "#fff", boxShadow: "inset 0 0 0 1px rgba(229,229,234,0.9)" }} />
+          <div style={{ position: "absolute", inset: -8, borderRadius: "50%", background: "radial-gradient(circle, rgba(0,113,227,0.16), transparent 68%)", animation: "loaderPulse 1.8s ease-in-out infinite" }} />
+        </div>
         <div style={{ marginTop: 18, fontWeight: 800, letterSpacing: "-0.01em" }}>{label}</div>
         <div style={{ marginTop: 6, color: T.colors.textSecondary, fontSize: 13 }}>Realtime CRM ma'lumotlari tayyorlanmoqda.</div>
+        <div style={{ marginTop: 14, display: "flex", justifyContent: "center", gap: 6 }}>
+          {[0, 1, 2].map((index) => (
+            <span key={index} style={{ width: 6, height: 6, borderRadius: "50%", background: T.colors.accent, opacity: 0.2 + index * 0.2, animation: `loaderBounce 1.2s ease-in-out ${index * 0.12}s infinite` }} />
+          ))}
+        </div>
       </Card>
     </div>
   );
@@ -2455,20 +2893,37 @@ function LoadingScreen({ label = "Yuklanmoqda..." }) {
 export default function App() {
   const [profile, setProfile] = useState(null);
   const [crm, setCrm] = useState(EMPTY_CRM);
+  const [chatMessages, setChatMessages] = useState([]);
   const [page, setPage] = useState("dashboard");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [booting, setBooting] = useState(true);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const [toasts, setToasts] = useState([]);
   const pendingRegistrationRef = useRef(null);
   const crmRef = useRef(EMPTY_CRM);
   const latestLocalMutationRef = useRef("");
+  const chatSeededRef = useRef(false);
   const rootRef = hasFirebaseConfig && db ? doc(db, "crm", ROOT_DOC_ID) : null;
+  const chatCollectionRef = hasFirebaseConfig && db ? collection(db, "crm", ROOT_DOC_ID, "chatMessages") : null;
+
+  function pushToast(text, tone = "success") {
+    if (!text) return;
+    setToasts((current) => [...current.slice(-2), { id: makeId("toast"), text, tone }]);
+  }
 
   useEffect(() => {
     crmRef.current = crm;
   }, [crm]);
+
+  useEffect(() => {
+    if (!toasts.length) return undefined;
+    const timeout = setTimeout(() => {
+      setToasts((current) => current.slice(1));
+    }, 2800);
+    return () => clearTimeout(timeout);
+  }, [toasts]);
 
   useEffect(() => {
     if (!hasFirebaseConfig || !auth) {
@@ -2482,6 +2937,8 @@ export default function App() {
         if (!firebaseUser) {
           setProfile(null);
           setCrm(EMPTY_CRM);
+          setChatMessages([]);
+          chatSeededRef.current = false;
           setBooting(false);
           return;
         }
@@ -2548,6 +3005,55 @@ export default function App() {
     return () => unsubscribe();
   }, [profile, rootRef]);
 
+  useEffect(() => {
+    if (!profile || !chatCollectionRef) return undefined;
+    const unsubscribe = onSnapshot(query(chatCollectionRef, orderBy("createdAt")), (snapshot) => {
+      const nextMessages = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+      if (nextMessages.length) {
+        setChatMessages(nextMessages);
+      } else {
+        setChatMessages(sortByRecent(crmRef.current.chatMessages, "createdAt").reverse());
+      }
+    });
+    return () => unsubscribe();
+  }, [profile?.uid, chatCollectionRef]);
+
+  useEffect(() => {
+    if (!profile || !chatCollectionRef || chatSeededRef.current) return undefined;
+    const rootMessages = normalizeCrmPayload(crmRef.current).chatMessages;
+    if (!rootMessages.length) {
+      chatSeededRef.current = true;
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      const snapshot = await getDocs(chatCollectionRef);
+      if (cancelled || !snapshot.empty) {
+        chatSeededRef.current = true;
+        return;
+      }
+      const batch = writeBatch(db);
+      rootMessages.forEach((message) => {
+        const nextMessage = {
+          userId: message.userId || "",
+          authorName: message.authorName || "Noma'lum",
+          text: message.text || "",
+          createdAt: message.createdAt || isoNow(),
+          editedAt: message.editedAt || null,
+          readBy: message.readBy || (message.userId ? { [message.userId]: true } : {}),
+        };
+        batch.set(doc(chatCollectionRef, message.id || makeId("chat")), nextMessage);
+      });
+      await batch.commit();
+      chatSeededRef.current = true;
+    })().catch(() => {
+      chatSeededRef.current = true;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.uid, chatCollectionRef, crm.chatMessages.length]);
+
   async function commitMutation(recipe, meta = {}) {
     if (!rootRef || !profile) return;
     const previous = crmRef.current;
@@ -2565,11 +3071,16 @@ export default function App() {
         const next = finalizeMutationPayload(recipe(current), current, meta, profile);
         transaction.set(rootRef, { payload: next }, { merge: false });
       });
+      const toastText = meta.toastText || (meta.page === "chat" ? "" : meta.notifyText);
+      if (toastText && !meta.silent) {
+        pushToast(toastText);
+      }
     } catch (error) {
       latestLocalMutationRef.current = String(previous.meta?.updatedAt || "");
       crmRef.current = previous;
       setCrm(previous);
       setAuthError(humanizeAuthError(error));
+      pushToast(humanizeAuthError(error), "error");
     } finally {
       if (!meta.silent) {
         setSyncing(false);
@@ -2666,9 +3177,11 @@ export default function App() {
     await signOut(auth);
     setPage("dashboard");
     setSelectedProjectId("");
+    setChatMessages([]);
   }
 
   async function createProject(project) {
+    if (!canEdit(profile?.role)) return;
     await commitMutation(
       (current) => ({
         ...current,
@@ -2691,6 +3204,7 @@ export default function App() {
   }
 
   async function saveProject(project, meta = {}) {
+    if (!canWorkInProject(profile, project)) return;
     await commitMutation(
       (current) => ({
         ...current,
@@ -2701,6 +3215,7 @@ export default function App() {
   }
 
   async function deleteProject(projectId) {
+    if (!canEdit(profile?.role)) return;
     const project = crm.projects.find((item) => item.id === projectId);
     if (!window.confirm("Loyiha butunlay o'chirilsinmi?")) return;
     await commitMutation(
@@ -2714,6 +3229,7 @@ export default function App() {
   }
 
   async function saveEmployee(nextEmployee) {
+    if (!canManagePeople(profile?.role)) return;
     await commitMutation(
       (current) => ({
         ...current,
@@ -2729,6 +3245,7 @@ export default function App() {
   }
 
   async function createEmployee(nextEmployee) {
+    if (!canManagePeople(profile?.role)) return;
     const employee = {
       id: makeId("employee"),
       roleCode: "EMPLOYEE",
@@ -2754,6 +3271,7 @@ export default function App() {
   }
 
   async function deleteEmployee(employeeId) {
+    if (!canManagePeople(profile?.role)) return;
     const employee = crm.employees.find((item) => item.id === employeeId);
     if (!window.confirm("Xodim kartochkasi o'chirilsinmi?")) return;
     await commitMutation(
@@ -2778,7 +3296,9 @@ export default function App() {
 
   async function saveShoot(item) {
     if (!item.projectId || !item.type) return;
-    const nextItem = item.id ? item : { ...item, id: makeId("shoot") };
+    const relatedProject = crm.projects.find((project) => project.id === item.projectId);
+    if (!canWorkInProject(profile, relatedProject)) return;
+    const nextItem = withRecordMeta(item.id ? item : { ...item, id: makeId("shoot") }, profile);
     await commitMutation(
       (current) => ({
         ...current,
@@ -2789,6 +3309,9 @@ export default function App() {
   }
 
   async function deleteShoot(id) {
+    const relatedShoot = crm.shoots.find((shoot) => shoot.id === id);
+    const relatedProject = crm.projects.find((project) => project.id === relatedShoot?.projectId);
+    if (!canWorkInProject(profile, relatedProject)) return;
     if (!window.confirm("Syomka yozuvi o'chirilsinmi?")) return;
     await commitMutation(
       (current) => ({ ...current, shoots: current.shoots.filter((shoot) => shoot.id !== id) }),
@@ -2797,6 +3320,7 @@ export default function App() {
   }
 
   async function addMeeting(item) {
+    if (!canEdit(profile?.role)) return;
     if (!item.client.trim()) return;
     await commitMutation(
       (current) => ({ ...current, meetings: [...current.meetings, { ...item, id: makeId("meeting") }] }),
@@ -2805,6 +3329,7 @@ export default function App() {
   }
 
   async function deleteMeeting(id) {
+    if (!canEdit(profile?.role)) return;
     if (!window.confirm("Meeting yozuvi o'chirilsinmi?")) return;
     await commitMutation(
       (current) => ({ ...current, meetings: current.meetings.filter((meeting) => meeting.id !== id) }),
@@ -2813,13 +3338,60 @@ export default function App() {
   }
 
   async function sendChatMessage(text) {
-    await commitMutation(
-      (current) => ({
-        ...current,
-        chatMessages: [...current.chatMessages, { id: makeId("chat"), userId: profile.uid, authorName: profile.name, text, createdAt: isoNow() }],
-      }),
-      { notifyText: "Yangi chat xabari keldi", auditText: "Chat xabari yuborildi", page: "chat" }
+    if (!chatCollectionRef || !profile) return;
+    const message = {
+      id: makeId("chat"),
+      userId: profile.uid,
+      authorName: profile.name,
+      text,
+      createdAt: isoNow(),
+      editedAt: null,
+      readBy: { [profile.uid]: true },
+    };
+    setChatMessages((current) => [...current, message].sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || ""))));
+    try {
+      await setDoc(doc(chatCollectionRef, message.id), message, { merge: false });
+    } catch (error) {
+      setChatMessages((current) => current.filter((item) => item.id !== message.id));
+      setAuthError(humanizeAuthError(error));
+      pushToast(humanizeAuthError(error), "error");
+    }
+  }
+
+  async function editChatMessage(messageId, text) {
+    if (!chatCollectionRef || !profile) return;
+    const nextEditedAt = isoNow();
+    setChatMessages((current) =>
+      current.map((message) => (message.id === messageId ? { ...message, text, editedAt: nextEditedAt } : message))
     );
+    try {
+      await setDoc(doc(chatCollectionRef, messageId), { text, editedAt: nextEditedAt }, { merge: true });
+    } catch (error) {
+      setAuthError(humanizeAuthError(error));
+      pushToast(humanizeAuthError(error), "error");
+    }
+  }
+
+  async function markChatMessagesRead() {
+    if (!chatCollectionRef || !profile) return;
+    const unread = chatMessages.filter((message) => message.userId !== profile.uid && !message.readBy?.[profile.uid]).slice(-30);
+    if (!unread.length) return;
+    setChatMessages((current) =>
+      current.map((message) =>
+        unread.some((item) => item.id === message.id)
+          ? { ...message, readBy: { ...(message.readBy || {}), [profile.uid]: true } }
+          : message
+      )
+    );
+    try {
+      const batch = writeBatch(db);
+      unread.forEach((message) => {
+        batch.set(doc(chatCollectionRef, message.id), { readBy: { ...(message.readBy || {}), [profile.uid]: true } }, { merge: true });
+      });
+      await batch.commit();
+    } catch (error) {
+      setAuthError(humanizeAuthError(error));
+    }
   }
 
   if (!hasFirebaseConfig) {
@@ -2874,13 +3446,14 @@ export default function App() {
             />
           ) : null}
           {page === "team" ? <TeamPage profile={profile} employees={employees} projects={crm.projects} onSaveEmployee={saveEmployee} onCreateEmployee={createEmployee} onDeleteEmployee={deleteEmployee} /> : null}
-          {page === "shooting" ? <ShootingPage profile={profile} shoots={crm.shoots} projects={crm.projects} employees={employees} onSaveShoot={saveShoot} onDeleteShoot={deleteShoot} /> : null}
+          {page === "shooting" ? <ShootingPage profile={profile} shoots={visibleShoots(profile, crm.shoots, crm.projects)} projects={projects} employees={employees} onSaveShoot={saveShoot} onDeleteShoot={deleteShoot} /> : null}
           {page === "meetings" ? <MeetingsPage profile={profile} meetings={crm.meetings} employees={employees} onAddMeeting={addMeeting} onDeleteMeeting={deleteMeeting} /> : null}
-          {page === "chat" ? <ChatPage profile={profile} employees={employees} messages={crm.chatMessages} onSendMessage={sendChatMessage} /> : null}
+          {page === "chat" ? <ChatPage profile={profile} employees={employees} messages={chatMessages} onSendMessage={sendChatMessage} onEditMessage={editChatMessage} onMarkRead={markChatMessagesRead} /> : null}
           {page === "notifications" ? <NotificationsPage notifications={crm.notifications} profile={profile} onMarkAllRead={markAllNotificationsRead} /> : null}
           {page === "reports" && canViewReports(profile.role) ? <ReportsPage projects={crm.projects} /> : null}
           {page === "workflow" ? <WorkflowPage /> : null}
         </main>
+        <ToastStack toasts={toasts} />
       </div>
     </>
   );
@@ -2908,6 +3481,18 @@ function GlobalStyles() {
       @keyframes spin {
         from { transform: rotate(0deg); }
         to { transform: rotate(360deg); }
+      }
+      @keyframes appleSpin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      @keyframes loaderPulse {
+        0%, 100% { transform: scale(0.9); opacity: 0.45; }
+        50% { transform: scale(1.08); opacity: 1; }
+      }
+      @keyframes loaderBounce {
+        0%, 100% { transform: translateY(0); opacity: 0.25; }
+        50% { transform: translateY(-4px); opacity: 1; }
       }
       @media (max-width: 1080px) {
         main { max-width: 100% !important; padding: 24px !important; }
