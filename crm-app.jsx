@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, startTransition, useEffect, useMemo, useRef, useState } from "react";
 import {
   GoogleAuthProvider,
   onAuthStateChanged,
@@ -6,7 +6,7 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
-import { collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, runTransaction, setDoc, writeBatch } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, limitToLast, onSnapshot, orderBy, query, runTransaction, setDoc, writeBatch } from "firebase/firestore";
 import { auth, db, googleProvider, hasFirebaseConfig } from "./firebase";
 
 const T = {
@@ -99,6 +99,8 @@ const EMPTY_CRM = {
 };
 
 const ROOT_DOC_ID = "agency-crm";
+const CRM_CACHE_KEY = `agency-crm-cache:${ROOT_DOC_ID}`;
+const CHAT_CACHE_KEY = `agency-crm-chat-cache:${ROOT_DOC_ID}`;
 const EDITOR_ROLES = new Set(["CEO", "MANAGER", "SUPERVISOR"]);
 const REPORT_ROLES = new Set(["CEO", "INVESTOR"]);
 const PEOPLE_ROLES = new Set(["CEO", "MANAGER", "SUPERVISOR"]);
@@ -144,6 +146,29 @@ function todayIso() {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function readCache(key, fallback) {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeCache(key, value) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Best-effort cache only.
+  }
+}
+
+function indexById(items) {
+  return Object.fromEntries((items || []).filter(Boolean).map((item) => [item.id, item]));
 }
 
 function initials(name = "?") {
@@ -365,6 +390,83 @@ function visibleShoots(profile, shoots, projects) {
   return shoots.filter((shoot) => allowedProjects.has(shoot.projectId));
 }
 
+function visibleEmployees(profile, employees, projects) {
+  if (!profile) return [];
+  if (canManagePeople(profile.role) || canViewReports(profile.role)) {
+    return employees.filter((employee) => employee.roleCode !== "INVESTOR");
+  }
+  const allowedIds = new Set([profile.uid]);
+  visibleProjects(profile, projects).forEach((project) => {
+    if (project.managerId) allowedIds.add(project.managerId);
+    project.teamIds.forEach((teamId) => allowedIds.add(teamId));
+    project.tasks.forEach((task) => task.ownerId && allowedIds.add(task.ownerId));
+    project.contentPlan.forEach((item) => item.ownerId && allowedIds.add(item.ownerId));
+    project.mediaPlan.forEach((item) => item.ownerId && allowedIds.add(item.ownerId));
+    project.calls.forEach((item) => item.whoId && allowedIds.add(item.whoId));
+  });
+  return employees.filter((employee) => employee.roleCode !== "INVESTOR" && allowedIds.has(employee.id));
+}
+
+function buildProjectCaches(projects) {
+  const progressByProjectId = {};
+  const employeeStats = new Map();
+  const assignmentsByEmployeeId = new Map();
+  let totalTasks = 0;
+  let completedTasks = 0;
+  let activeProjects = 0;
+  let pendingReviews = 0;
+
+  const ensureEmployee = (employeeId) => {
+    if (!employeeId) return null;
+    if (!employeeStats.has(employeeId)) {
+      employeeStats.set(employeeId, { total: 0, completed: 0, approved: 0, active: 0, overdue: 0, projects: 0 });
+    }
+    return employeeStats.get(employeeId);
+  };
+
+  projects.forEach((project) => {
+    const progress = calcProjectProgress(project);
+    progressByProjectId[project.id] = progress;
+    if (project.status === "Jarayonda") activeProjects += 1;
+    pendingReviews += project.contentPlan.filter((item) => item.status === "Ko'rib chiqilmoqda").length;
+
+    const memberIds = new Set([project.managerId, ...project.teamIds].filter(Boolean));
+    const projectChip = { id: project.id, name: project.name, status: project.status, progress };
+    memberIds.forEach((employeeId) => {
+      const stats = ensureEmployee(employeeId);
+      if (!stats) return;
+      stats.projects += 1;
+      if (!assignmentsByEmployeeId.has(employeeId)) assignmentsByEmployeeId.set(employeeId, []);
+      assignmentsByEmployeeId.get(employeeId).push(projectChip);
+    });
+
+    project.tasks.forEach((task) => {
+      totalTasks += 1;
+      if (task.status === "Bajarildi") completedTasks += 1;
+      const stats = ensureEmployee(task.ownerId);
+      if (!stats) return;
+      stats.total += 1;
+      if (task.status === "Bajarildi") stats.completed += 1;
+      if (task.status === "Tasdiqlandi") stats.approved += 1;
+      if (task.status === "Jarayonda" || task.status === "Ko'rib chiqilmoqda") stats.active += 1;
+      if (task.deadline && task.deadline < todayIso() && task.status !== "Bajarildi") stats.overdue += 1;
+    });
+  });
+
+  const employeeMetricsById = {};
+  employeeStats.forEach((stats, employeeId) => {
+    const score = stats.total ? Math.round(clamp(((stats.completed * 1 + stats.approved * 0.85 + stats.active * 0.55) / stats.total) * 100, 10, 100)) : 0;
+    employeeMetricsById[employeeId] = { ...stats, kpi: score };
+  });
+
+  return {
+    progressByProjectId,
+    assignmentsByEmployeeId: Object.fromEntries(assignmentsByEmployeeId),
+    employeeMetricsById,
+    dashboardSummary: { totalTasks, completedTasks, activeProjects, pendingReviews },
+  };
+}
+
 function normalizeComments(comments) {
   return Array.isArray(comments) ? comments : [];
 }
@@ -436,7 +538,7 @@ function humanizeAuthError(error) {
   return map[code] || `Firebase xatosi: ${code || error?.message || "noma'lum xato"}`;
 }
 
-function Avatar({ name, url, size = 34 }) {
+const Avatar = memo(function Avatar({ name, url, size = 34 }) {
   const palette = [T.colors.accent, T.colors.purple, T.colors.orange, T.colors.green, T.colors.indigo, "#e11d48"];
   const bg = palette[(name?.charCodeAt(0) || 0) % palette.length];
   return (
@@ -460,7 +562,7 @@ function Avatar({ name, url, size = 34 }) {
       {url ? <img src={url} alt={name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : initials(name)}
     </div>
   );
-}
+});
 
 function Button({ children, variant = "primary", style = {}, ...props }) {
   const variants = {
@@ -645,7 +747,57 @@ function EmptyState({ title, desc, icon = "◌" }) {
   );
 }
 
-function StatusBadge({ value }) {
+function SkeletonBlock({ height = 16, width = "100%", radius = T.radius.md, style = {} }) {
+  return (
+    <div
+      style={{
+        width,
+        height,
+        borderRadius: radius,
+        background: "linear-gradient(90deg, rgba(229,229,234,0.6) 0%, rgba(245,245,247,1) 50%, rgba(229,229,234,0.6) 100%)",
+        backgroundSize: "200% 100%",
+        animation: "skeletonShimmer 1.4s linear infinite",
+        ...style,
+      }}
+    />
+  );
+}
+
+function DashboardSkeleton() {
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 14 }}>
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Card key={index} style={{ padding: 18 }}>
+            <SkeletonBlock width="42%" height={28} />
+            <SkeletonBlock width="68%" height={14} style={{ marginTop: 12 }} />
+            <SkeletonBlock width="52%" height={12} style={{ marginTop: 8 }} />
+          </Card>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.35fr) minmax(320px, 0.85fr)", gap: 18, marginTop: 20 }}>
+        <Card><SkeletonBlock height={280} /></Card>
+        <Card><SkeletonBlock height={280} /></Card>
+      </div>
+    </div>
+  );
+}
+
+function GridSkeleton({ cards = 6, minWidth = 280 }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${minWidth}px, 1fr))`, gap: 14 }}>
+      {Array.from({ length: cards }).map((_, index) => (
+        <Card key={index}>
+          <SkeletonBlock width="55%" height={18} />
+          <SkeletonBlock width="32%" height={12} style={{ marginTop: 8 }} />
+          <SkeletonBlock height={90} style={{ marginTop: 16 }} />
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+const StatusBadge = memo(function StatusBadge({ value }) {
   const meta = STATUS_META[value] || STATUS_META["Rejalashtirildi"];
   return (
     <span
@@ -666,7 +818,7 @@ function StatusBadge({ value }) {
       {value}
     </span>
   );
-}
+});
 
 function StatusSelect({ value, options, onChange, disabled }) {
   const meta = STATUS_META[value] || STATUS_META["Rejalashtirildi"];
@@ -699,14 +851,14 @@ function StatusSelect({ value, options, onChange, disabled }) {
   );
 }
 
-function PriorityBadge({ value }) {
+const PriorityBadge = memo(function PriorityBadge({ value }) {
   const meta = PRIORITY_META[value] || PRIORITY_META["O'rta"];
   return (
     <span style={{ background: meta.bg, color: meta.text, borderRadius: T.radius.full, padding: "5px 10px", fontSize: 12, fontWeight: 800 }}>
       {value}
     </span>
   );
-}
+});
 
 function CommentThread({ comments = [], onAddComment, placeholder = "Izoh qoldiring...", accent = T.colors.accent }) {
   const [open, setOpen] = useState(false);
@@ -883,7 +1035,7 @@ function Cell({ children, style = {} }) {
   return <td style={{ padding: "11px 14px", borderTop: `1px solid ${T.colors.borderLight}`, fontSize: 13.5, verticalAlign: "top", ...style }}>{children}</td>;
 }
 
-function CircleProgress({ pct, size = 66, stroke = 6, color = T.colors.accent }) {
+const CircleProgress = memo(function CircleProgress({ pct, size = 66, stroke = 6, color = T.colors.accent }) {
   const radius = (size - stroke * 2) / 2;
   const circumference = 2 * Math.PI * radius;
   const dash = (circumference * Math.min(pct, 100)) / 100;
@@ -893,7 +1045,7 @@ function CircleProgress({ pct, size = 66, stroke = 6, color = T.colors.accent })
       <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke={color} strokeWidth={stroke} strokeDasharray={`${dash} ${circumference}`} strokeLinecap="round" />
     </svg>
   );
-}
+});
 
 function TeamSelector({ employees, value, onChange }) {
   const nextValue = Array.isArray(value) ? value : [];
@@ -1231,17 +1383,14 @@ function MotivationGauge({ score }) {
   );
 }
 
-function DashboardPage({ profile, projects, employees, onOpenProject }) {
-  const totalTasks = projects.flatMap((project) => project.tasks).length;
-  const completedTasks = projects.flatMap((project) => project.tasks).filter((task) => task.status === "Bajarildi").length;
-  const activeProjects = projects.filter((project) => project.status === "Jarayonda").length;
-  const pendingReviews = projects.flatMap((project) => project.contentPlan).filter((item) => item.status === "Ko'rib chiqilmoqda").length;
+function DashboardPage({ profile, projects, employees, employeeMetricsById, progressByProjectId, dashboardSummary, loading, onOpenProject }) {
   const score = healthScore(projects);
+  const employeeMap = useMemo(() => indexById(employees), [employees]);
 
   const ranking = employees
     .map((employee) => ({
       employee,
-      metrics: employeeMetrics(employee.id, projects),
+      metrics: employeeMetricsById[employee.id] || { total: 0, completed: 0, approved: 0, active: 0, overdue: 0, kpi: 0, projects: 0 },
     }))
     .sort((a, b) => {
       if (b.metrics.kpi !== a.metrics.kpi) return b.metrics.kpi - a.metrics.kpi;
@@ -1254,107 +1403,112 @@ function DashboardPage({ profile, projects, employees, onOpenProject }) {
     <div>
       <PageHeader title="Dashboard" subtitle={`Xush kelibsiz, ${profile.name}. Bugungi holat real CRM ma'lumotlari bilan hisoblanmoqda.`} />
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
-        <StatCard label="Loyihalar" value={projects.length} hint={`${activeProjects} tasi faol`} color={T.colors.accent} />
-        <StatCard label="Tasklar" value={`${completedTasks}/${totalTasks}`} hint="Bajarilgan ishlar" color={T.colors.green} />
-        <StatCard label="Xodimlar" value={employees.length} hint="Real foydalanuvchilar" color={T.colors.purple} />
-        <StatCard label="Tasdiq kutmoqda" value={pendingReviews} hint="Kontent ko'rib chiqilmoqda" color={T.colors.orange} />
-      </div>
+      {loading ? <DashboardSkeleton /> : null}
+      {!loading ? (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
+            <StatCard label="Loyihalar" value={projects.length} hint={`${dashboardSummary.activeProjects} tasi faol`} color={T.colors.accent} />
+            <StatCard label="Tasklar" value={`${dashboardSummary.completedTasks}/${dashboardSummary.totalTasks}`} hint="Bajarilgan ishlar" color={T.colors.green} />
+            <StatCard label="Xodimlar" value={employees.length} hint="Real foydalanuvchilar" color={T.colors.purple} />
+            <StatCard label="Tasdiq kutmoqda" value={dashboardSummary.pendingReviews} hint="Kontent ko'rib chiqilmoqda" color={T.colors.orange} />
+          </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.35fr) minmax(320px, 0.85fr)", gap: 18, marginTop: 20 }}>
-        <Card>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
-            <div>
-              <div style={{ fontSize: 18, fontWeight: 900 }}>Loyihalar holati</div>
-              <div style={{ color: T.colors.textMuted, fontSize: 13, marginTop: 4 }}>Status va progress bo'yicha tez ko'rinish</div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.35fr) minmax(320px, 0.85fr)", gap: 18, marginTop: 20 }}>
+            <Card>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 900 }}>Loyihalar holati</div>
+                  <div style={{ color: T.colors.textMuted, fontSize: 13, marginTop: 4 }}>Status va progress bo'yicha tez ko'rinish</div>
+                </div>
+              </div>
+              {projects.length ? (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {projects.map((project) => {
+                    const manager = employeeMap[project.managerId];
+                    const progress = progressByProjectId[project.id] ?? calcProjectProgress(project);
+                    const progressColor = progress >= 75 ? T.colors.green : progress >= 40 ? T.colors.accent : T.colors.orange;
+                    return (
+                      <div key={project.id} onClick={() => onOpenProject(project.id)} style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px", borderRadius: T.radius.md, cursor: "pointer" }}>
+                        <div style={{ position: "relative", flexShrink: 0 }}>
+                          <CircleProgress pct={progress} size={54} stroke={5} color={progressColor} />
+                          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: progressColor }}>{progress}%</div>
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 14 }}>{project.name}</div>
+                          <div style={{ marginTop: 2, color: T.colors.textSecondary, fontSize: 12 }}>{project.client} · {project.type || "Xizmat turi kiritilmagan"}</div>
+                          <div style={{ marginTop: 4 }}>
+                            <StatusBadge value={project.status} />
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <PriorityBadge value={project.priority} />
+                          <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 8, justifyContent: "flex-end" }}>
+                            {manager ? <Avatar name={manager.name} url={manager.avatarUrl} size={20} /> : null}
+                            <span style={{ fontSize: 11, color: T.colors.textSecondary }}>{manager?.name?.split(" ")[0] || "Manager"}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <EmptyState title="Hali loyiha yo'q" desc="CEO, menejer yoki boshqaruvchi birinchi loyihani yaratgach dashboard to'ladi." />
+              )}
+            </Card>
+
+            <div style={{ display: "grid", gap: 18 }}>
+              <Card>
+                <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 12 }}>Oyning eng kuchli xodimi</div>
+                {topEmployee ? (
+                  <>
+                    <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                      <Avatar name={topEmployee.employee.name} url={topEmployee.employee.avatarUrl} size={58} />
+                      <div>
+                        <div style={{ fontSize: 18, fontWeight: 900 }}>{topEmployee.employee.name}</div>
+                        <div style={{ color: T.colors.textMuted, fontSize: 13 }}>{topEmployee.employee.role} · {topEmployee.employee.dept}</div>
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginTop: 16 }}>
+                      <StatCard label="KPI" value={`${topEmployee.metrics.kpi}%`} hint="Umumiy natija" color={T.colors.accent} />
+                      <StatCard label="Bajarildi" value={topEmployee.metrics.completed} hint="Task soni" color={T.colors.green} />
+                      <StatCard label="Loyihalar" value={topEmployee.metrics.projects} hint="Biriktirilgan" color={T.colors.purple} />
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ color: T.colors.textMuted }}>Xodimlar va tasklar paydo bo'lgach ranking hisoblanadi.</div>
+                )}
+              </Card>
+
+              <Card>
+                <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 12 }}>Jamoa yuklamasi</div>
+                {employees.length ? (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {employees.map((employee) => {
+                      const metrics = employeeMetricsById[employee.id] || { active: 0, projects: 0 };
+                      const load = clamp(metrics.active * 18 + metrics.projects * 10, 0, 100);
+                      return (
+                        <div key={employee.id}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                            <div style={{ fontWeight: 800, fontSize: 13 }}>{employee.name}</div>
+                            <div style={{ fontSize: 12, color: T.colors.textMuted }}>{load}%</div>
+                          </div>
+                          <div style={{ height: 8, borderRadius: T.radius.full, background: T.colors.borderLight, overflow: "hidden" }}>
+                            <div style={{ width: `${load}%`, height: "100%", background: load > 75 ? T.colors.orange : T.colors.blue }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ color: T.colors.textMuted }}>Jamoa ma'lumoti hali yo'q.</div>
+                )}
+              </Card>
             </div>
           </div>
-          {projects.length ? (
-            <div style={{ display: "grid", gap: 10 }}>
-              {projects.map((project) => {
-                const manager = employees.find((employee) => employee.id === project.managerId);
-                const progress = calcProjectProgress(project);
-                const progressColor = progress >= 75 ? T.colors.green : progress >= 40 ? T.colors.accent : T.colors.orange;
-                return (
-                  <div key={project.id} onClick={() => onOpenProject(project.id)} style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px", borderRadius: T.radius.md, cursor: "pointer" }}>
-                    <div style={{ position: "relative", flexShrink: 0 }}>
-                      <CircleProgress pct={progress} size={54} stroke={5} color={progressColor} />
-                      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: progressColor }}>{progress}%</div>
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: 14 }}>{project.name}</div>
-                      <div style={{ marginTop: 2, color: T.colors.textSecondary, fontSize: 12 }}>{project.client} · {project.type || "Xizmat turi kiritilmagan"}</div>
-                      <div style={{ marginTop: 4 }}>
-                        <StatusBadge value={project.status} />
-                      </div>
-                    </div>
-                    <div style={{ textAlign: "right", flexShrink: 0 }}>
-                      <PriorityBadge value={project.priority} />
-                      <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 8, justifyContent: "flex-end" }}>
-                        {manager ? <Avatar name={manager.name} url={manager.avatarUrl} size={20} /> : null}
-                        <span style={{ fontSize: 11, color: T.colors.textSecondary }}>{manager?.name?.split(" ")[0] || "Manager"}</span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <EmptyState title="Hali loyiha yo'q" desc="CEO, menejer yoki boshqaruvchi birinchi loyihani yaratgach dashboard to'ladi." />
-          )}
-        </Card>
 
-        <div style={{ display: "grid", gap: 18 }}>
-          <Card>
-            <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 12 }}>Oyning eng kuchli xodimi</div>
-            {topEmployee ? (
-              <>
-                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                  <Avatar name={topEmployee.employee.name} url={topEmployee.employee.avatarUrl} size={58} />
-                  <div>
-                    <div style={{ fontSize: 18, fontWeight: 900 }}>{topEmployee.employee.name}</div>
-                    <div style={{ color: T.colors.textMuted, fontSize: 13 }}>{topEmployee.employee.role} · {topEmployee.employee.dept}</div>
-                  </div>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginTop: 16 }}>
-                  <StatCard label="KPI" value={`${topEmployee.metrics.kpi}%`} hint="Umumiy natija" color={T.colors.accent} />
-                  <StatCard label="Bajarildi" value={topEmployee.metrics.completed} hint="Task soni" color={T.colors.green} />
-                  <StatCard label="Loyihalar" value={topEmployee.metrics.projects} hint="Biriktirilgan" color={T.colors.purple} />
-                </div>
-              </>
-            ) : (
-              <div style={{ color: T.colors.textMuted }}>Xodimlar va tasklar paydo bo'lgach ranking hisoblanadi.</div>
-            )}
-          </Card>
-
-          <Card>
-            <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 12 }}>Jamoa yuklamasi</div>
-            {employees.length ? (
-              <div style={{ display: "grid", gap: 10 }}>
-                {employees.map((employee) => {
-                  const metrics = employeeMetrics(employee.id, projects);
-                  const load = clamp(metrics.active * 18 + metrics.projects * 10, 0, 100);
-                  return (
-                    <div key={employee.id}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                        <div style={{ fontWeight: 800, fontSize: 13 }}>{employee.name}</div>
-                        <div style={{ fontSize: 12, color: T.colors.textMuted }}>{load}%</div>
-                      </div>
-                      <div style={{ height: 8, borderRadius: T.radius.full, background: T.colors.borderLight, overflow: "hidden" }}>
-                        <div style={{ width: `${load}%`, height: "100%", background: load > 75 ? T.colors.orange : T.colors.blue }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div style={{ color: T.colors.textMuted }}>Jamoa ma'lumoti hali yo'q.</div>
-            )}
-          </Card>
-        </div>
-      </div>
-
-      <MotivationGauge score={score} />
+          <MotivationGauge score={score} />
+        </>
+      ) : null}
     </div>
   );
 }
@@ -1443,6 +1597,7 @@ function ReportEditor({ project, editable, onChange }) {
 function TasksTab({ profile, project, employees, editable, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
   const assignableEmployees = projectMembers(project, employees);
+  const employeeMap = useMemo(() => indexById(employees), [employees]);
   const [editingTask, setEditingTask] = useState(null);
   const [draft, setDraft] = useState({ name: "", ownerId: assignableEmployees[0]?.id || "", start: "", deadline: "", status: "Rejalashtirildi", note: "", comments: [] });
 
@@ -1516,7 +1671,7 @@ function TasksTab({ profile, project, employees, editable, onUpdateProject }) {
       {project.tasks.length ? (
         <DataTable columns={["Task", "Mas'ul", "Boshlanish", "Deadline", "Holat", "Izoh", "Komment", "Amal"]}>
           {project.tasks.map((task) => {
-            const owner = employees.find((employee) => employee.id === task.ownerId);
+            const owner = employeeMap[task.ownerId];
             const canChangeStatus = sectionEditable;
             return (
               <Row key={task.id}>
@@ -1555,6 +1710,7 @@ function TasksTab({ profile, project, employees, editable, onUpdateProject }) {
 function ContentPlanTab({ profile, project, employees, editable, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
   const assignableEmployees = projectMembers(project, employees);
+  const employeeMap = useMemo(() => indexById(employees), [employees]);
   const [draft, setDraft] = useState({ date: "", platform: "Instagram", format: "Post", topic: "", caption: "", ownerId: assignableEmployees[0]?.id || "", status: "Rejalashtirildi", note: "", comments: [] });
   const [editingId, setEditingId] = useState("");
 
@@ -1625,7 +1781,7 @@ function ContentPlanTab({ profile, project, employees, editable, onUpdateProject
       {project.contentPlan.length ? (
         <DataTable columns={["Sana", "Platforma", "Format", "Mavzu", "Mas'ul", "Holat", "Izoh", "Komment", "Amal"]}>
           {project.contentPlan.map((item) => {
-            const owner = employees.find((employee) => employee.id === item.ownerId);
+            const owner = employeeMap[item.ownerId];
             const canChangeStatus = sectionEditable;
             return (
               <Row key={item.id}>
@@ -1665,6 +1821,7 @@ function ContentPlanTab({ profile, project, employees, editable, onUpdateProject
 function MediaPlanTab({ profile, project, employees, editable, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
   const assignableEmployees = projectMembers(project, employees);
+  const employeeMap = useMemo(() => indexById(employees), [employees]);
   const [draft, setDraft] = useState({ date: "", type: "Post", platform: "Instagram", format: "Post", ownerId: assignableEmployees[0]?.id || "", budget: "", status: "Rejalashtirildi", note: "", comments: [] });
   const [editingId, setEditingId] = useState("");
 
@@ -1734,7 +1891,7 @@ function MediaPlanTab({ profile, project, employees, editable, onUpdateProject }
       {project.mediaPlan.length ? (
         <DataTable columns={["Sana", "Tur", "Platforma", "Mas'ul", "Byudjet", "Holat", "Izoh", "Komment", "Amal"]}>
           {project.mediaPlan.map((item) => {
-            const owner = employees.find((employee) => employee.id === item.ownerId);
+            const owner = employeeMap[item.ownerId];
             const canChangeStatus = sectionEditable;
             return (
               <Row key={item.id}>
@@ -1898,6 +2055,7 @@ function PlansTab({ profile, project, editable, onUpdateProject }) {
 function CallsTab({ profile, project, employees, editable, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
   const assignableEmployees = projectMembers(project, employees);
+  const employeeMap = useMemo(() => indexById(employees), [employees]);
   const [editingId, setEditingId] = useState("");
   const [draft, setDraft] = useState({ date: "", type: "Call", whoId: assignableEmployees[0]?.id || "", result: "", next: "", status: "Yangi", comments: [] });
 
@@ -1965,7 +2123,7 @@ function CallsTab({ profile, project, employees, editable, onUpdateProject }) {
       {project.calls.length ? (
         <div style={{ display: "grid", gap: 10 }}>
           {project.calls.map((item) => {
-            const person = employees.find((employee) => employee.id === item.whoId);
+            const person = employeeMap[item.whoId];
             return (
               <Card key={item.id} style={{ background: T.colors.bg }}>
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
@@ -2006,7 +2164,8 @@ function ProjectDetailPage({ profile, project, employees, onBack, onSaveProject,
   const editable = canManageProjectMeta(profile);
   const sectionEditable = canWorkInProject(profile, project);
   const progress = calcProjectProgress(project);
-  const manager = employees.find((employee) => employee.id === project.managerId);
+  const employeeMap = useMemo(() => indexById(employees), [employees]);
+  const manager = employeeMap[project.managerId];
   const progressColor = progress >= 75 ? T.colors.green : progress >= 40 ? T.colors.accent : T.colors.orange;
 
   return (
@@ -2041,7 +2200,7 @@ function ProjectDetailPage({ profile, project, employees, onBack, onSaveProject,
             {project.teamIds.length ? (
               <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                 {project.teamIds.slice(0, 5).map((teamId, index) => {
-                  const teamMember = employees.find((employee) => employee.id === teamId);
+                  const teamMember = employeeMap[teamId];
                   return teamMember ? <div key={teamId} style={{ marginLeft: index ? -6 : 0 }}><Avatar name={teamMember.name} url={teamMember.avatarUrl} size={24} /></div> : null;
                 })}
               </div>
@@ -2126,10 +2285,11 @@ function ProjectDetailPage({ profile, project, employees, onBack, onSaveProject,
   );
 }
 
-function ProjectsPage({ profile, projects, employees, selectedProjectId, onSelectProject, onBackToList, onCreateProject, onSaveProject, onDeleteProject }) {
+function ProjectsPage({ profile, projects, employees, selectedProjectId, onSelectProject, onBackToList, onCreateProject, onSaveProject, onDeleteProject, loading, progressByProjectId }) {
   const [showCreate, setShowCreate] = useState(false);
   const editable = canEdit(profile.role);
   const selectedProject = projects.find((project) => project.id === selectedProjectId) || null;
+  const employeeMap = useMemo(() => indexById(employees), [employees]);
 
   if (selectedProject) {
     return (
@@ -2152,11 +2312,13 @@ function ProjectsPage({ profile, projects, employees, selectedProjectId, onSelec
         action={editable ? <Button onClick={() => setShowCreate(true)}>Yangi loyiha</Button> : null}
       />
 
-      {projects.length ? (
+      {loading ? <GridSkeleton cards={6} minWidth={320} /> : null}
+
+      {!loading && projects.length ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
           {projects.map((project) => {
-            const manager = employees.find((employee) => employee.id === project.managerId);
-            const progress = calcProjectProgress(project);
+            const manager = employeeMap[project.managerId];
+            const progress = progressByProjectId[project.id] ?? calcProjectProgress(project);
             const progressColor = progress >= 75 ? T.colors.green : progress >= 40 ? T.colors.accent : T.colors.orange;
             return (
               <Card key={project.id} onClick={() => onSelectProject(project.id)}>
@@ -2194,7 +2356,7 @@ function ProjectsPage({ profile, projects, employees, selectedProjectId, onSelec
                   </div>
                   <div style={{ display: "flex", gap: 0 }}>
                     {project.teamIds.slice(0, 3).map((teamId, index) => {
-                      const teamMember = employees.find((employee) => employee.id === teamId);
+                      const teamMember = employeeMap[teamId];
                       return teamMember ? <div key={teamId} style={{ marginLeft: index ? -6 : 0 }}><Avatar name={teamMember.name} url={teamMember.avatarUrl} size={22} /></div> : null;
                     })}
                   </div>
@@ -2203,9 +2365,9 @@ function ProjectsPage({ profile, projects, employees, selectedProjectId, onSelec
             );
           })}
         </div>
-      ) : (
+      ) : !loading ? (
         <EmptyState title="Loyihalar hali yo'q" desc="Yangi loyiha yaratilgach bu yerda ko'rinadi." />
-      )}
+      ) : null}
 
       {showCreate ? (
         <ProjectFormModal
@@ -2221,14 +2383,18 @@ function ProjectsPage({ profile, projects, employees, selectedProjectId, onSelec
   );
 }
 
-function TeamPage({ profile, employees, projects, onSaveEmployee, onCreateEmployee, onDeleteEmployee }) {
+function TeamPage({ profile, employees, projects, employeeMetricsById, assignmentsByEmployeeId, onSaveEmployee, onCreateEmployee, onDeleteEmployee, loading }) {
   const [editingEmployee, setEditingEmployee] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const editable = canManagePeople(profile.role);
-  const grouped = DEPARTMENTS.map((dept) => ({
-    dept,
-    employees: employees.filter((employee) => employee.dept === dept),
-  })).filter((group) => group.employees.length);
+  const grouped = useMemo(
+    () =>
+      DEPARTMENTS.map((dept) => ({
+        dept,
+        employees: employees.filter((employee) => employee.dept === dept),
+      })).filter((group) => group.employees.length),
+    [employees]
+  );
 
   return (
     <div>
@@ -2237,7 +2403,8 @@ function TeamPage({ profile, employees, projects, onSaveEmployee, onCreateEmploy
         subtitle={`${employees.length} ta xodim. Google orqali kirganlar va qo'lda kiritilgan jamoa kartochkalari shu yerda.`}
         action={editable ? <Button onClick={() => setShowAdd(true)}>+ Xodim</Button> : null}
       />
-      {grouped.length ? (
+      {loading ? <GridSkeleton cards={8} minWidth={280} /> : null}
+      {!loading && grouped.length ? (
         <div style={{ display: "grid", gap: 20 }}>
           {grouped.map((group) => (
             <div key={group.dept}>
@@ -2247,8 +2414,8 @@ function TeamPage({ profile, employees, projects, onSaveEmployee, onCreateEmploy
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
                 {group.employees.map((employee) => {
-                  const metrics = employeeMetrics(employee.id, projects);
-                  const projectAssignments = projects.filter((project) => project.teamIds.includes(employee.id) || project.managerId === employee.id).slice(0, 3);
+                  const metrics = employeeMetricsById[employee.id] || { kpi: 0, active: 0, projects: 0 };
+                  const projectAssignments = (assignmentsByEmployeeId[employee.id] || []).slice(0, 3);
                   const loadTone = metrics.active > 4 ? T.colors.orange : T.colors.green;
                   return (
                     <Card key={employee.id} style={{ padding: 18 }}>
@@ -2301,9 +2468,9 @@ function TeamPage({ profile, employees, projects, onSaveEmployee, onCreateEmploy
             </div>
           ))}
         </div>
-      ) : (
+      ) : !loading ? (
         <EmptyState title="Xodimlar hali yo'q" desc="Xodim Google orqali kirgach avtomatik ro'yxatga qo'shiladi." />
-      )}
+      ) : null}
 
       {showAdd ? (
         <Modal title="Yangi xodim qo'shish" onClose={() => setShowAdd(false)} width={620}>
@@ -2370,6 +2537,8 @@ function EmployeeEditForm({ employee, onCancel, onSave, submitLabel = "Saqlash" 
 
 function ShootingPage({ profile, shoots, projects, employees, onSaveShoot, onDeleteShoot }) {
   const sectionEditable = profile.role !== "INVESTOR" && projects.length > 0;
+  const projectMap = useMemo(() => indexById(projects), [projects]);
+  const employeeMap = useMemo(() => indexById(employees), [employees]);
   const [editingId, setEditingId] = useState("");
   const [draft, setDraft] = useState({
     date: "",
@@ -2462,8 +2631,8 @@ function ShootingPage({ profile, shoots, projects, employees, onSaveShoot, onDel
               </div>
               <div style={{ display: "grid", gap: 12 }}>
                 {items.map((shoot) => {
-                  const project = projects.find((item) => item.id === shoot.projectId);
-                  const operator = employees.find((item) => item.id === shoot.operatorId);
+                  const project = projectMap[shoot.projectId];
+                  const operator = employeeMap[shoot.operatorId];
                   const canMutate = canEdit(profile.role) || Boolean(project);
                   return (
                     <Card key={shoot.id} style={{ background: "#fff", padding: 16 }}>
@@ -2513,6 +2682,7 @@ function ShootingPage({ profile, shoots, projects, employees, onSaveShoot, onDel
 
 function MeetingsPage({ profile, meetings, employees, onAddMeeting, onDeleteMeeting }) {
   const editable = canEdit(profile.role);
+  const employeeMap = useMemo(() => indexById(employees), [employees]);
   const [draft, setDraft] = useState({ client: "", date: "", type: "Call", whoId: employees[0]?.id || "", result: "", next: "" });
 
   return (
@@ -2546,7 +2716,7 @@ function MeetingsPage({ profile, meetings, employees, onAddMeeting, onDeleteMeet
         <Card>
           <DataTable columns={["Mijoz", "Sana", "Tur", "Kim", "Natija", "Keyingi qadam", "Amal"]}>
             {meetings.map((meeting) => {
-              const person = employees.find((employee) => employee.id === meeting.whoId);
+              const person = employeeMap[meeting.whoId];
               return (
                 <Row key={meeting.id}>
                   <Cell style={{ fontWeight: 900 }}>{meeting.client}</Cell>
@@ -2660,7 +2830,7 @@ function WorkflowPage() {
   );
 }
 
-function ChatPage({ profile, employees, messages, onSendMessage, onEditMessage, onMarkRead }) {
+function ChatPage({ profile, employees, messages, onSendMessage, onEditMessage, onMarkRead, loading }) {
   const [input, setInput] = useState("");
   const [editingId, setEditingId] = useState("");
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -2723,7 +2893,15 @@ function ChatPage({ profile, employees, messages, onSendMessage, onEditMessage, 
         </div>
 
         <div ref={viewportRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: T.space.xl, display: "flex", flexDirection: "column", gap: 14, background: "linear-gradient(180deg, #ffffff 0%, #fafafe 100%)" }}>
-          {sortedMessages.length ? (
+          {loading ? (
+            <div style={{ display: "grid", gap: 12 }}>
+              {Array.from({ length: 8 }).map((_, index) => (
+                <div key={index} style={{ display: "flex", justifyContent: index % 2 ? "flex-end" : "flex-start" }}>
+                  <SkeletonBlock width={index % 2 ? "42%" : "58%"} height={52} radius={16} />
+                </div>
+              ))}
+            </div>
+          ) : sortedMessages.length ? (
             sortedMessages.map((message) => {
               const author = employeeMap[message.userId] || { name: message.authorName || "Noma'lum" };
               const mine = message.userId === profile.uid;
@@ -2897,6 +3075,8 @@ export default function App() {
   const [page, setPage] = useState("dashboard");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [booting, setBooting] = useState(true);
+  const [crmReady, setCrmReady] = useState(false);
+  const [chatReady, setChatReady] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -2939,6 +3119,8 @@ export default function App() {
           setCrm(EMPTY_CRM);
           setChatMessages([]);
           chatSeededRef.current = false;
+          setCrmReady(false);
+          setChatReady(false);
           setBooting(false);
           return;
         }
@@ -2985,9 +3167,20 @@ export default function App() {
 
   useEffect(() => {
     if (!profile || !rootRef) return undefined;
+    setCrmReady(false);
+    const cachedCrm = readCache(CRM_CACHE_KEY, null);
+    if (cachedCrm) {
+      const normalizedCachedCrm = normalizeCrmPayload(cachedCrm);
+      crmRef.current = normalizedCachedCrm;
+      startTransition(() => {
+        setCrm(normalizedCachedCrm);
+        setCrmReady(true);
+      });
+    }
     const unsubscribe = onSnapshot(rootRef, async (snapshot) => {
       if (!snapshot.exists()) {
         await setDoc(rootRef, { payload: EMPTY_CRM }, { merge: true });
+        setCrmReady(true);
         return;
       }
       const nextCrm = normalizeCrmPayload(snapshot.data().payload);
@@ -3000,20 +3193,34 @@ export default function App() {
         latestLocalMutationRef.current = "";
       }
       crmRef.current = nextCrm;
-      setCrm(nextCrm);
+      startTransition(() => {
+        setCrm(nextCrm);
+        setCrmReady(true);
+      });
     });
     return () => unsubscribe();
   }, [profile, rootRef]);
 
   useEffect(() => {
     if (!profile || !chatCollectionRef) return undefined;
-    const unsubscribe = onSnapshot(query(chatCollectionRef, orderBy("createdAt")), (snapshot) => {
+    setChatReady(false);
+    const cachedMessages = readCache(CHAT_CACHE_KEY, []);
+    if (Array.isArray(cachedMessages) && cachedMessages.length) {
+      startTransition(() => {
+        setChatMessages(cachedMessages);
+        setChatReady(true);
+      });
+    }
+    const unsubscribe = onSnapshot(query(chatCollectionRef, orderBy("createdAt"), limitToLast(120)), (snapshot) => {
       const nextMessages = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
-      if (nextMessages.length) {
-        setChatMessages(nextMessages);
-      } else {
-        setChatMessages(sortByRecent(crmRef.current.chatMessages, "createdAt").reverse());
-      }
+      startTransition(() => {
+        if (nextMessages.length) {
+          setChatMessages(nextMessages);
+        } else {
+          setChatMessages(sortByRecent(crmRef.current.chatMessages, "createdAt").reverse());
+        }
+        setChatReady(true);
+      });
     });
     return () => unsubscribe();
   }, [profile?.uid, chatCollectionRef]);
@@ -3030,6 +3237,12 @@ export default function App() {
       const snapshot = await getDocs(chatCollectionRef);
       if (cancelled || !snapshot.empty) {
         chatSeededRef.current = true;
+        if (!cancelled && rootMessages.length) {
+          await commitMutation(
+            (current) => (current.chatMessages.length ? { ...current, chatMessages: [] } : current),
+            { skipAudit: true, silent: true }
+          );
+        }
         return;
       }
       const batch = writeBatch(db);
@@ -3046,6 +3259,12 @@ export default function App() {
       });
       await batch.commit();
       chatSeededRef.current = true;
+      if (!cancelled) {
+        await commitMutation(
+          (current) => (current.chatMessages.length ? { ...current, chatMessages: [] } : current),
+          { skipAudit: true, silent: true }
+        );
+      }
     })().catch(() => {
       chatSeededRef.current = true;
     });
@@ -3054,13 +3273,23 @@ export default function App() {
     };
   }, [profile?.uid, chatCollectionRef, crm.chatMessages.length]);
 
+  useEffect(() => {
+    if (!profile || !crmReady) return;
+    writeCache(CRM_CACHE_KEY, crm);
+  }, [profile?.uid, crm, crmReady]);
+
+  useEffect(() => {
+    if (!profile || !chatReady) return;
+    writeCache(CHAT_CACHE_KEY, chatMessages.slice(-120));
+  }, [profile?.uid, chatMessages, chatReady]);
+
   async function commitMutation(recipe, meta = {}) {
     if (!rootRef || !profile) return;
     const previous = crmRef.current;
     const optimistic = finalizeMutationPayload(recipe(previous), previous, meta, profile);
     latestLocalMutationRef.current = optimistic.meta?.updatedAt || "";
     crmRef.current = optimistic;
-    setCrm(optimistic);
+    startTransition(() => setCrm(optimistic));
     if (!meta.silent) {
       setSyncing(true);
     }
@@ -3078,7 +3307,7 @@ export default function App() {
     } catch (error) {
       latestLocalMutationRef.current = String(previous.meta?.updatedAt || "");
       crmRef.current = previous;
-      setCrm(previous);
+      startTransition(() => setCrm(previous));
       setAuthError(humanizeAuthError(error));
       pushToast(humanizeAuthError(error), "error");
     } finally {
@@ -3102,8 +3331,10 @@ export default function App() {
   }, [profile?.uid]);
 
   const projects = useMemo(() => visibleProjects(profile, crm.projects), [profile, crm.projects]);
-  const employees = useMemo(() => crm.employees.filter((employee) => employee.roleCode !== "INVESTOR"), [crm.employees]);
-  const unreadCount = profile ? unreadNotifications(crm.notifications, profile.uid) : 0;
+  const employees = useMemo(() => visibleEmployees(profile, crm.employees, crm.projects), [profile, crm.employees, crm.projects]);
+  const shoots = useMemo(() => visibleShoots(profile, crm.shoots, crm.projects), [profile, crm.shoots, crm.projects]);
+  const projectCaches = useMemo(() => buildProjectCaches(projects), [projects]);
+  const unreadCount = useMemo(() => (profile ? unreadNotifications(crm.notifications, profile.uid) : 0), [crm.notifications, profile]);
 
   function navigate(nextPage) {
     setPage(nextPage);
@@ -3348,11 +3579,19 @@ export default function App() {
       editedAt: null,
       readBy: { [profile.uid]: true },
     };
-    setChatMessages((current) => [...current, message].sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || ""))));
+    startTransition(() => {
+      setChatMessages((current) =>
+        [...current, message]
+          .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")))
+          .slice(-120)
+      );
+    });
     try {
       await setDoc(doc(chatCollectionRef, message.id), message, { merge: false });
     } catch (error) {
-      setChatMessages((current) => current.filter((item) => item.id !== message.id));
+      startTransition(() => {
+        setChatMessages((current) => current.filter((item) => item.id !== message.id));
+      });
       setAuthError(humanizeAuthError(error));
       pushToast(humanizeAuthError(error), "error");
     }
@@ -3361,9 +3600,11 @@ export default function App() {
   async function editChatMessage(messageId, text) {
     if (!chatCollectionRef || !profile) return;
     const nextEditedAt = isoNow();
-    setChatMessages((current) =>
-      current.map((message) => (message.id === messageId ? { ...message, text, editedAt: nextEditedAt } : message))
-    );
+    startTransition(() => {
+      setChatMessages((current) =>
+        current.map((message) => (message.id === messageId ? { ...message, text, editedAt: nextEditedAt } : message))
+      );
+    });
     try {
       await setDoc(doc(chatCollectionRef, messageId), { text, editedAt: nextEditedAt }, { merge: true });
     } catch (error) {
@@ -3376,13 +3617,15 @@ export default function App() {
     if (!chatCollectionRef || !profile) return;
     const unread = chatMessages.filter((message) => message.userId !== profile.uid && !message.readBy?.[profile.uid]).slice(-30);
     if (!unread.length) return;
-    setChatMessages((current) =>
-      current.map((message) =>
-        unread.some((item) => item.id === message.id)
-          ? { ...message, readBy: { ...(message.readBy || {}), [profile.uid]: true } }
-          : message
-      )
-    );
+    startTransition(() => {
+      setChatMessages((current) =>
+        current.map((message) =>
+          unread.some((item) => item.id === message.id)
+            ? { ...message, readBy: { ...(message.readBy || {}), [profile.uid]: true } }
+            : message
+        )
+      );
+    });
     try {
       const batch = writeBatch(db);
       unread.forEach((message) => {
@@ -3431,7 +3674,18 @@ export default function App() {
             </div>
           ) : null}
 
-          {page === "dashboard" ? <DashboardPage profile={profile} projects={projects} employees={employees} onOpenProject={(id) => { setSelectedProjectId(id); setPage("projects"); }} /> : null}
+          {page === "dashboard" ? (
+            <DashboardPage
+              profile={profile}
+              projects={projects}
+              employees={employees}
+              employeeMetricsById={projectCaches.employeeMetricsById}
+              progressByProjectId={projectCaches.progressByProjectId}
+              dashboardSummary={projectCaches.dashboardSummary}
+              loading={!crmReady}
+              onOpenProject={(id) => { setSelectedProjectId(id); setPage("projects"); }}
+            />
+          ) : null}
           {page === "projects" ? (
             <ProjectsPage
               profile={profile}
@@ -3443,12 +3697,26 @@ export default function App() {
               onCreateProject={createProject}
               onSaveProject={saveProject}
               onDeleteProject={deleteProject}
+              loading={!crmReady}
+              progressByProjectId={projectCaches.progressByProjectId}
             />
           ) : null}
-          {page === "team" ? <TeamPage profile={profile} employees={employees} projects={crm.projects} onSaveEmployee={saveEmployee} onCreateEmployee={createEmployee} onDeleteEmployee={deleteEmployee} /> : null}
-          {page === "shooting" ? <ShootingPage profile={profile} shoots={visibleShoots(profile, crm.shoots, crm.projects)} projects={projects} employees={employees} onSaveShoot={saveShoot} onDeleteShoot={deleteShoot} /> : null}
+          {page === "team" ? (
+            <TeamPage
+              profile={profile}
+              employees={employees}
+              projects={projects}
+              employeeMetricsById={projectCaches.employeeMetricsById}
+              assignmentsByEmployeeId={projectCaches.assignmentsByEmployeeId}
+              onSaveEmployee={saveEmployee}
+              onCreateEmployee={createEmployee}
+              onDeleteEmployee={deleteEmployee}
+              loading={!crmReady}
+            />
+          ) : null}
+          {page === "shooting" ? <ShootingPage profile={profile} shoots={shoots} projects={projects} employees={employees} onSaveShoot={saveShoot} onDeleteShoot={deleteShoot} /> : null}
           {page === "meetings" ? <MeetingsPage profile={profile} meetings={crm.meetings} employees={employees} onAddMeeting={addMeeting} onDeleteMeeting={deleteMeeting} /> : null}
-          {page === "chat" ? <ChatPage profile={profile} employees={employees} messages={chatMessages} onSendMessage={sendChatMessage} onEditMessage={editChatMessage} onMarkRead={markChatMessagesRead} /> : null}
+          {page === "chat" ? <ChatPage profile={profile} employees={employees} messages={chatMessages} onSendMessage={sendChatMessage} onEditMessage={editChatMessage} onMarkRead={markChatMessagesRead} loading={!chatReady} /> : null}
           {page === "notifications" ? <NotificationsPage notifications={crm.notifications} profile={profile} onMarkAllRead={markAllNotificationsRead} /> : null}
           {page === "reports" && canViewReports(profile.role) ? <ReportsPage projects={crm.projects} /> : null}
           {page === "workflow" ? <WorkflowPage /> : null}
@@ -3493,6 +3761,10 @@ function GlobalStyles() {
       @keyframes loaderBounce {
         0%, 100% { transform: translateY(0); opacity: 0.25; }
         50% { transform: translateY(-4px); opacity: 1; }
+      }
+      @keyframes skeletonShimmer {
+        from { background-position: 200% 0; }
+        to { background-position: -200% 0; }
       }
       @media (max-width: 1080px) {
         main { max-width: 100% !important; padding: 24px !important; }
