@@ -6,7 +6,7 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
-import { collection, doc, getDoc, getDocs, limitToLast, onSnapshot, orderBy, query, runTransaction, setDoc, writeBatch } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, getDocs, limit, limitToLast, onSnapshot, orderBy, query, setDoc, startAfter, writeBatch } from "firebase/firestore";
 import { auth, db, googleProvider, hasFirebaseConfig } from "./firebase";
 
 const T = {
@@ -98,9 +98,18 @@ const EMPTY_CRM = {
   meta: { version: 2, updatedAt: null, updatedBy: null },
 };
 
+const EMPTY_PROJECT_WORKSPACE = {
+  tasks: [],
+  contentPlan: [],
+  mediaPlan: [],
+  plans: { daily: [], weekly: [], monthly: [] },
+  calls: [],
+};
+
 const ROOT_DOC_ID = "agency-crm";
 const CRM_CACHE_KEY = `agency-crm-cache:${ROOT_DOC_ID}`;
 const CHAT_CACHE_KEY = `agency-crm-chat-cache:${ROOT_DOC_ID}`;
+const SCHEMA_VERSION = 3;
 const EDITOR_ROLES = new Set(["CEO", "MANAGER", "SUPERVISOR"]);
 const REPORT_ROLES = new Set(["CEO", "INVESTOR"]);
 const PEOPLE_ROLES = new Set(["CEO", "MANAGER", "SUPERVISOR"]);
@@ -167,6 +176,10 @@ function writeCache(key, value) {
   }
 }
 
+function projectWorkspaceCacheKey(projectId) {
+  return `${CRM_CACHE_KEY}:project:${projectId}`;
+}
+
 function indexById(items) {
   return Object.fromEntries((items || []).filter(Boolean).map((item) => [item.id, item]));
 }
@@ -192,6 +205,8 @@ function normalizeProject(project) {
     teamIds: Array.isArray(project.teamIds) ? project.teamIds : [],
     status: project.status || "Rejalashtirildi",
     priority: project.priority || "O'rta",
+    visibility: project.visibility || "team",
+    archived: Boolean(project.archived),
     tasks: Array.isArray(project.tasks) ? project.tasks : [],
     contentPlan: Array.isArray(project.contentPlan) ? project.contentPlan : [],
     mediaPlan: Array.isArray(project.mediaPlan) ? project.mediaPlan : [],
@@ -208,6 +223,20 @@ function normalizeProject(project) {
       sales: Number(project.report?.sales || 0),
       roi: Number(project.report?.roi || 0),
     },
+    metrics: {
+      totalTasks: Number(project.metrics?.totalTasks || 0),
+      completedTasks: Number(project.metrics?.completedTasks || 0),
+      approvedTasks: Number(project.metrics?.approvedTasks || 0),
+      activeTasks: Number(project.metrics?.activeTasks || 0),
+      overdueTasks: Number(project.metrics?.overdueTasks || 0),
+      pendingReviews: Number(project.metrics?.pendingReviews || 0),
+      progress: Number(project.metrics?.progress || 0),
+    },
+    memberStats: project.memberStats && typeof project.memberStats === "object" ? project.memberStats : {},
+    createdAt: project.createdAt || null,
+    createdBy: project.createdBy || "",
+    updatedAt: project.updatedAt || null,
+    updatedBy: project.updatedBy || "",
   };
 }
 
@@ -265,6 +294,66 @@ function employeeToProfilePatch(employee) {
   };
 }
 
+function employeeToPublicDoc(employee) {
+  const roleCode = employee.roleCode || "EMPLOYEE";
+  return {
+    uid: employee.id,
+    email: employee.email || "",
+    name: employee.name || "",
+    avatarUrl: employee.avatarUrl || "",
+    roleCode,
+    role: employee.role || ROLE_META[roleCode]?.title || "Xodim",
+    dept: employee.dept || ROLE_META[roleCode]?.dept || "SMM bo'limi",
+    title: employee.role || ROLE_META[roleCode]?.title || "Xodim",
+    status: employee.status || "active",
+    assignedProjectIds: Array.isArray(employee.assignedProjectIds) ? employee.assignedProjectIds : [],
+    createdAt: employee.createdAt || isoNow(),
+    updatedAt: employee.updatedAt || isoNow(),
+  };
+}
+
+function employeeToPrivateDoc(employee) {
+  return {
+    salary: Number(employee.salary || 0),
+    kpiBase: Number(employee.kpiBase || 80),
+    load: Number(employee.load || 0),
+    updatedAt: isoNow(),
+  };
+}
+
+function mergeEmployeeDocs(publicUsers, privateUsers, viewerRole, projects = []) {
+  const assignedProjectIdsByUser = {};
+  projects.forEach((project) => {
+    [project.managerId, ...(project.teamIds || [])].filter(Boolean).forEach((userId) => {
+      if (!assignedProjectIdsByUser[userId]) assignedProjectIdsByUser[userId] = new Set();
+      assignedProjectIdsByUser[userId].add(project.id);
+    });
+  });
+  return publicUsers
+    .filter((user) => user?.status !== "merged" && user?.roleCode !== "INVESTOR")
+    .map((user) => {
+      const privateDoc = privateUsers[user.id] || {};
+      const merged = {
+        id: user.id,
+        name: user.name || "",
+        email: user.email || "",
+        avatarUrl: user.avatarUrl || "",
+        roleCode: user.roleCode || "EMPLOYEE",
+        role: user.role || user.title || ROLE_META[user.roleCode]?.title || "Xodim",
+        dept: user.dept || ROLE_META[user.roleCode]?.dept || "SMM bo'limi",
+        title: user.title || user.role || ROLE_META[user.roleCode]?.title || "Xodim",
+        status: user.status || "active",
+        assignedProjectIds: Array.from(assignedProjectIdsByUser[user.id] || user.assignedProjectIds || []),
+        createdAt: user.createdAt || isoNow(),
+        updatedAt: user.updatedAt || isoNow(),
+        salary: canManagePeople(viewerRole) ? Number(privateDoc.salary || 0) : undefined,
+        kpiBase: canManagePeople(viewerRole) ? Number(privateDoc.kpiBase || 80) : 80,
+        load: canManagePeople(viewerRole) ? Number(privateDoc.load || 0) : 0,
+      };
+      return merged;
+    });
+}
+
 function createNotification(meta, actor) {
   if (!meta?.notifyText) return null;
   return {
@@ -303,6 +392,9 @@ function finalizeMutationPayload(next, current, meta, actor) {
 }
 
 function calcProjectProgress(project) {
+  if (Number.isFinite(project?.metrics?.progress) && !(Array.isArray(project?.tasks) && project.tasks.length)) {
+    return Number(project.metrics.progress);
+  }
   const tasks = Array.isArray(project.tasks) ? project.tasks : [];
   if (!tasks.length) return 0;
   const completed = tasks.filter((task) => task.status === "Bajarildi").length;
@@ -331,7 +423,23 @@ function employeeMetrics(employeeId, projects) {
 }
 
 function healthScore(projects) {
-  const allTasks = projects.flatMap((project) => project.tasks);
+  const allTasks = projects.flatMap((project) => (Array.isArray(project.tasks) && project.tasks.length ? project.tasks : []));
+  if (!allTasks.length && projects.some((project) => project.metrics)) {
+    const aggregate = projects.reduce(
+      (acc, project) => {
+        const metrics = project.metrics || {};
+        acc.total += Number(metrics.totalTasks || 0);
+        acc.completed += Number(metrics.completedTasks || 0);
+        acc.approved += Number(metrics.approvedTasks || 0);
+        acc.active += Number(metrics.activeTasks || 0);
+        acc.overdue += Number(metrics.overdueTasks || 0);
+        return acc;
+      },
+      { total: 0, completed: 0, approved: 0, active: 0, overdue: 0 }
+    );
+    if (!aggregate.total) return 55;
+    return Math.round(clamp((aggregate.completed / aggregate.total) * 62 + (aggregate.approved / aggregate.total) * 18 + (aggregate.active / aggregate.total) * 10 - aggregate.overdue * 4 + 20, 0, 100));
+  }
   if (!allTasks.length) return 55;
   const completed = allTasks.filter((task) => task.status === "Bajarildi").length;
   const active = allTasks.filter((task) => task.status === "Jarayonda" || task.status === "Ko'rib chiqilmoqda").length;
@@ -380,9 +488,9 @@ function projectMembers(project, employees) {
 function visibleProjects(profile, projects) {
   if (!profile) return [];
   if (profile.role === "EMPLOYEE") {
-    return projects.filter((project) => project.teamIds.includes(profile.uid) || project.managerId === profile.uid);
+    return projects.filter((project) => !project.archived && (project.teamIds.includes(profile.uid) || project.managerId === profile.uid));
   }
-  return projects;
+  return projects.filter((project) => !project.archived);
 }
 
 function visibleShoots(profile, shoots, projects) {
@@ -392,19 +500,7 @@ function visibleShoots(profile, shoots, projects) {
 
 function visibleEmployees(profile, employees, projects) {
   if (!profile) return [];
-  if (canManagePeople(profile.role) || canViewReports(profile.role)) {
-    return employees.filter((employee) => employee.roleCode !== "INVESTOR");
-  }
-  const allowedIds = new Set([profile.uid]);
-  visibleProjects(profile, projects).forEach((project) => {
-    if (project.managerId) allowedIds.add(project.managerId);
-    project.teamIds.forEach((teamId) => allowedIds.add(teamId));
-    project.tasks.forEach((task) => task.ownerId && allowedIds.add(task.ownerId));
-    project.contentPlan.forEach((item) => item.ownerId && allowedIds.add(item.ownerId));
-    project.mediaPlan.forEach((item) => item.ownerId && allowedIds.add(item.ownerId));
-    project.calls.forEach((item) => item.whoId && allowedIds.add(item.whoId));
-  });
-  return employees.filter((employee) => employee.roleCode !== "INVESTOR" && allowedIds.has(employee.id));
+  return employees.filter((employee) => employee.roleCode !== "INVESTOR" && employee.status !== "merged");
 }
 
 function buildProjectCaches(projects) {
@@ -428,7 +524,10 @@ function buildProjectCaches(projects) {
     const progress = calcProjectProgress(project);
     progressByProjectId[project.id] = progress;
     if (project.status === "Jarayonda") activeProjects += 1;
-    pendingReviews += project.contentPlan.filter((item) => item.status === "Ko'rib chiqilmoqda").length;
+    const pendingReviewCount = Array.isArray(project.contentPlan) && project.contentPlan.length
+      ? project.contentPlan.filter((item) => item.status === "Ko'rib chiqilmoqda").length
+      : Number(project.metrics?.pendingReviews || 0);
+    pendingReviews += pendingReviewCount;
 
     const memberIds = new Set([project.managerId, ...project.teamIds].filter(Boolean));
     const projectChip = { id: project.id, name: project.name, status: project.status, progress };
@@ -440,17 +539,31 @@ function buildProjectCaches(projects) {
       assignmentsByEmployeeId.get(employeeId).push(projectChip);
     });
 
-    project.tasks.forEach((task) => {
-      totalTasks += 1;
-      if (task.status === "Bajarildi") completedTasks += 1;
-      const stats = ensureEmployee(task.ownerId);
-      if (!stats) return;
-      stats.total += 1;
-      if (task.status === "Bajarildi") stats.completed += 1;
-      if (task.status === "Tasdiqlandi") stats.approved += 1;
-      if (task.status === "Jarayonda" || task.status === "Ko'rib chiqilmoqda") stats.active += 1;
-      if (task.deadline && task.deadline < todayIso() && task.status !== "Bajarildi") stats.overdue += 1;
-    });
+    if (Array.isArray(project.tasks) && project.tasks.length) {
+      project.tasks.forEach((task) => {
+        totalTasks += 1;
+        if (task.status === "Bajarildi") completedTasks += 1;
+        const stats = ensureEmployee(task.ownerId);
+        if (!stats) return;
+        stats.total += 1;
+        if (task.status === "Bajarildi") stats.completed += 1;
+        if (task.status === "Tasdiqlandi") stats.approved += 1;
+        if (task.status === "Jarayonda" || task.status === "Ko'rib chiqilmoqda") stats.active += 1;
+        if (task.deadline && task.deadline < todayIso() && task.status !== "Bajarildi") stats.overdue += 1;
+      });
+    } else {
+      totalTasks += Number(project.metrics?.totalTasks || 0);
+      completedTasks += Number(project.metrics?.completedTasks || 0);
+      Object.entries(project.memberStats || {}).forEach(([employeeId, memberStats]) => {
+        const stats = ensureEmployee(employeeId);
+        if (!stats) return;
+        stats.total += Number(memberStats.total || 0);
+        stats.completed += Number(memberStats.completed || 0);
+        stats.approved += Number(memberStats.approved || 0);
+        stats.active += Number(memberStats.active || 0);
+        stats.overdue += Number(memberStats.overdue || 0);
+      });
+    }
   });
 
   const employeeMetricsById = {};
@@ -465,6 +578,364 @@ function buildProjectCaches(projects) {
     employeeMetricsById,
     dashboardSummary: { totalTasks, completedTasks, activeProjects, pendingReviews },
   };
+}
+
+function flattenPlans(plans = {}) {
+  return [
+    ...(Array.isArray(plans.daily) ? plans.daily.map((item) => ({ ...item, planType: "daily" })) : []),
+    ...(Array.isArray(plans.weekly) ? plans.weekly.map((item) => ({ ...item, planType: "weekly" })) : []),
+    ...(Array.isArray(plans.monthly) ? plans.monthly.map((item) => ({ ...item, planType: "monthly" })) : []),
+  ];
+}
+
+function splitPlans(planItems = []) {
+  return planItems.reduce(
+    (acc, item) => {
+      const planType = item.planType || "daily";
+      if (!acc[planType]) acc[planType] = [];
+      acc[planType].push(item);
+      return acc;
+    },
+    { daily: [], weekly: [], monthly: [] }
+  );
+}
+
+function computeProjectMetrics(project) {
+  const tasks = Array.isArray(project.tasks) ? project.tasks : [];
+  const contentPlan = Array.isArray(project.contentPlan) ? project.contentPlan : [];
+  const completedTasks = tasks.filter((task) => task.status === "Bajarildi").length;
+  const approvedTasks = tasks.filter((task) => task.status === "Tasdiqlandi").length;
+  const activeTasks = tasks.filter((task) => task.status === "Jarayonda" || task.status === "Ko'rib chiqilmoqda").length;
+  const overdueTasks = tasks.filter((task) => task.deadline && task.deadline < todayIso() && task.status !== "Bajarildi").length;
+  const pendingReviews = contentPlan.filter((item) => item.status === "Ko'rib chiqilmoqda").length;
+  const totalTasks = tasks.length;
+  return {
+    totalTasks,
+    completedTasks,
+    approvedTasks,
+    activeTasks,
+    overdueTasks,
+    pendingReviews,
+    progress: totalTasks ? Math.round((completedTasks / totalTasks) * 100) : 0,
+  };
+}
+
+function computeProjectMemberStats(project) {
+  const statsByEmployeeId = {};
+  (project.tasks || []).forEach((task) => {
+    if (!task.ownerId) return;
+    if (!statsByEmployeeId[task.ownerId]) {
+      statsByEmployeeId[task.ownerId] = { total: 0, completed: 0, approved: 0, active: 0, overdue: 0 };
+    }
+    const stats = statsByEmployeeId[task.ownerId];
+    stats.total += 1;
+    if (task.status === "Bajarildi") stats.completed += 1;
+    if (task.status === "Tasdiqlandi") stats.approved += 1;
+    if (task.status === "Jarayonda" || task.status === "Ko'rib chiqilmoqda") stats.active += 1;
+    if (task.deadline && task.deadline < todayIso() && task.status !== "Bajarildi") stats.overdue += 1;
+  });
+  return statsByEmployeeId;
+}
+
+function projectMetaDocFromProject(project, actor, fallback = null) {
+  const normalizedProject = normalizeProject(project);
+  return {
+    name: normalizedProject.name,
+    client: normalizedProject.client,
+    type: normalizedProject.type,
+    start: normalizedProject.start,
+    end: normalizedProject.end,
+    managerId: normalizedProject.managerId,
+    teamIds: normalizedProject.teamIds,
+    status: normalizedProject.status,
+    priority: normalizedProject.priority,
+    visibility: normalizedProject.visibility || "team",
+    archived: Boolean(normalizedProject.archived),
+    report: normalizedProject.report,
+    metrics: computeProjectMetrics(normalizedProject),
+    memberStats: computeProjectMemberStats(normalizedProject),
+    createdAt: fallback?.createdAt || normalizedProject.createdAt || isoNow(),
+    createdBy: fallback?.createdBy || normalizedProject.createdBy || actor?.uid || "",
+    updatedAt: isoNow(),
+    updatedBy: actor?.uid || "",
+  };
+}
+
+function hydrateProject(metaProject, workspace = {}) {
+  return normalizeProject({
+    ...metaProject,
+    tasks: workspace.tasks ?? metaProject.tasks ?? [],
+    contentPlan: workspace.contentPlan ?? metaProject.contentPlan ?? [],
+    mediaPlan: workspace.mediaPlan ?? metaProject.mediaPlan ?? [],
+    plans: workspace.plans ?? metaProject.plans ?? { daily: [], weekly: [], monthly: [] },
+    calls: workspace.calls ?? metaProject.calls ?? [],
+  });
+}
+
+function normalizeStoredProjectMeta(id, data) {
+  return normalizeProject({
+    id,
+    ...data,
+    tasks: [],
+    contentPlan: [],
+    mediaPlan: [],
+    plans: { daily: [], weekly: [], monthly: [] },
+    calls: [],
+  });
+}
+
+function normalizeStoredUser(id, data) {
+  return {
+    id,
+    uid: data.uid || id,
+    email: data.email || "",
+    name: data.name || "",
+    avatarUrl: data.avatarUrl || "",
+    roleCode: data.roleCode || data.role || "EMPLOYEE",
+    role: data.role || data.title || ROLE_META[data.roleCode || data.role]?.title || "Xodim",
+    title: data.title || data.role || ROLE_META[data.roleCode || data.role]?.title || "Xodim",
+    dept: data.dept || ROLE_META[data.roleCode || data.role]?.dept || "SMM bo'limi",
+    status: data.status || "active",
+    assignedProjectIds: Array.isArray(data.assignedProjectIds) ? data.assignedProjectIds : [],
+    createdAt: data.createdAt || isoNow(),
+    updatedAt: data.updatedAt || isoNow(),
+  };
+}
+
+function normalizeStoredPrivateUser(id, data) {
+  return {
+    id,
+    salary: Number(data.salary || 0),
+    kpiBase: Number(data.kpiBase || 80),
+    load: Number(data.load || 0),
+    updatedAt: data.updatedAt || isoNow(),
+  };
+}
+
+function normalizeStoredRecord(id, data) {
+  return {
+    id,
+    ...data,
+    comments: normalizeComments(data.comments),
+  };
+}
+
+function buildAssignedProjectIdsMap(projects) {
+  const map = {};
+  projects.forEach((project) => {
+    [project.managerId, ...(project.teamIds || [])].filter(Boolean).forEach((employeeId) => {
+      if (!map[employeeId]) map[employeeId] = [];
+      if (!map[employeeId].includes(project.id)) map[employeeId].push(project.id);
+    });
+  });
+  return map;
+}
+
+function createMetaDocs(meta, actor) {
+  const docs = [];
+  if (meta?.notifyText) {
+    docs.push({
+      collection: "notifications",
+      id: makeId("notification"),
+      data: {
+        text: meta.notifyText,
+        page: meta.page || "dashboard",
+        actorId: actor?.uid || "",
+        actorName: actor?.name || actor?.email || "Tizim",
+        createdAt: isoNow(),
+        readBy: actor?.uid ? { [actor.uid]: true } : {},
+      },
+    });
+  }
+  if (!meta?.skipAudit) {
+    docs.push({
+      collection: "auditLogs",
+      id: makeId("audit"),
+      data: {
+        text: meta?.auditText || meta?.notifyText || "CRM ma'lumoti yangilandi",
+        actorId: actor?.uid || "",
+        actorName: actor?.name || actor?.email || "Tizim",
+        createdAt: isoNow(),
+      },
+    });
+  }
+  return docs;
+}
+
+async function commitBatchOperations(dbInstance, operations) {
+  if (!operations.length) return;
+  let batch = writeBatch(dbInstance);
+  let count = 0;
+  for (const operation of operations) {
+    if (operation.type === "set") {
+      batch.set(operation.ref, operation.data, operation.options || {});
+    } else if (operation.type === "delete") {
+      batch.delete(operation.ref);
+    }
+    count += 1;
+    if (count === 400) {
+      await batch.commit();
+      batch = writeBatch(dbInstance);
+      count = 0;
+    }
+  }
+  if (count) {
+    await batch.commit();
+  }
+}
+
+function syncCollectionOperations(baseCollection, previousItems, nextItems) {
+  const operations = [];
+  const prevMap = indexById(previousItems || []);
+  const nextMap = indexById(nextItems || []);
+  Object.values(nextMap).forEach((item) => {
+    operations.push({ type: "set", ref: doc(baseCollection, item.id), data: { ...item }, options: { merge: false } });
+  });
+  Object.keys(prevMap).forEach((id) => {
+    if (!nextMap[id]) operations.push({ type: "delete", ref: doc(baseCollection, id) });
+  });
+  return operations;
+}
+
+function legacyRootHasContent(legacyData) {
+  const payload = normalizeCrmPayload(legacyData);
+  return Boolean(
+    payload.projects.length ||
+      payload.employees.length ||
+      payload.shoots.length ||
+      payload.meetings.length ||
+      payload.chatMessages.length ||
+      payload.notifications.length ||
+      payload.auditLog.length
+  );
+}
+
+async function migrateLegacyRootSchema({ dbInstance, legacyRootRef, actor }) {
+  const metaRef = doc(dbInstance, "crmMeta", ROOT_DOC_ID);
+  const metaSnapshot = await getDoc(metaRef);
+  if (metaSnapshot.exists() && Number(metaSnapshot.data()?.schemaVersion || 0) >= SCHEMA_VERSION) {
+    return { migrated: false, reason: "already-migrated" };
+  }
+
+  const legacySnapshot = await getDoc(legacyRootRef);
+  if (!legacySnapshot.exists() || !legacyRootHasContent(legacySnapshot.data()?.payload)) {
+    await setDoc(metaRef, { schemaVersion: SCHEMA_VERSION, migratedAt: isoNow(), migratedBy: actor?.uid || "" }, { merge: true });
+    return { migrated: false, reason: "no-legacy-data" };
+  }
+
+  const legacy = normalizeCrmPayload(legacySnapshot.data().payload);
+  const operations = [];
+
+  legacy.employees.forEach((employee) => {
+    const normalized = {
+      ...employee,
+      id: employee.id || employee.uid || makeId("employee"),
+      roleCode: employee.roleCode || "EMPLOYEE",
+      createdAt: employee.createdAt || isoNow(),
+      updatedAt: employee.updatedAt || isoNow(),
+    };
+    operations.push({
+      type: "set",
+      ref: doc(dbInstance, "users", normalized.id),
+      data: employeeToPublicDoc(normalized),
+      options: { merge: true },
+    });
+    operations.push({
+      type: "set",
+      ref: doc(dbInstance, "userPrivate", normalized.id),
+      data: employeeToPrivateDoc(normalized),
+      options: { merge: true },
+    });
+  });
+
+  legacy.projects.forEach((project) => {
+    const normalizedProject = normalizeProject(project);
+    const projectRef = doc(dbInstance, "projects", normalizedProject.id);
+    operations.push({
+      type: "set",
+      ref: projectRef,
+      data: projectMetaDocFromProject(normalizedProject, { uid: normalizedProject.updatedBy || actor?.uid || "" }, normalizedProject),
+      options: { merge: true },
+    });
+    syncCollectionOperations(collection(projectRef, "tasks"), [], normalizedProject.tasks).forEach((operation) => operations.push(operation));
+    syncCollectionOperations(collection(projectRef, "content"), [], normalizedProject.contentPlan).forEach((operation) => operations.push(operation));
+    syncCollectionOperations(collection(projectRef, "mediaPlans"), [], normalizedProject.mediaPlan).forEach((operation) => operations.push(operation));
+    syncCollectionOperations(collection(projectRef, "plans"), [], flattenPlans(normalizedProject.plans)).forEach((operation) => operations.push(operation));
+    syncCollectionOperations(collection(projectRef, "calls"), [], normalizedProject.calls).forEach((operation) => operations.push(operation));
+  });
+
+  legacy.shoots.forEach((shoot) => {
+    operations.push({
+      type: "set",
+      ref: doc(dbInstance, "shoots", shoot.id || makeId("shoot")),
+      data: normalizeStoredRecord(shoot.id || makeId("shoot"), shoot),
+      options: { merge: true },
+    });
+  });
+
+  legacy.meetings.forEach((meeting) => {
+    operations.push({
+      type: "set",
+      ref: doc(dbInstance, "meetings", meeting.id || makeId("meeting")),
+      data: normalizeStoredRecord(meeting.id || makeId("meeting"), meeting),
+      options: { merge: true },
+    });
+  });
+
+  legacy.chatMessages.forEach((message) => {
+    operations.push({
+      type: "set",
+      ref: doc(dbInstance, "chatMessages", message.id || makeId("chat")),
+      data: {
+        userId: message.userId || "",
+        authorName: message.authorName || "Noma'lum",
+        text: message.text || "",
+        createdAt: message.createdAt || isoNow(),
+        editedAt: message.editedAt || null,
+        readBy: message.readBy || (message.userId ? { [message.userId]: true } : {}),
+        status: message.status || "sent",
+      },
+      options: { merge: true },
+    });
+  });
+
+  legacy.notifications.forEach((item) => {
+    operations.push({
+      type: "set",
+      ref: doc(dbInstance, "notifications", item.id || makeId("notification")),
+      data: normalizeStoredRecord(item.id || makeId("notification"), item),
+      options: { merge: true },
+    });
+  });
+
+  legacy.auditLog.forEach((item) => {
+    operations.push({
+      type: "set",
+      ref: doc(dbInstance, "auditLogs", item.id || makeId("audit")),
+      data: normalizeStoredRecord(item.id || makeId("audit"), item),
+      options: { merge: true },
+    });
+  });
+
+  const assignedProjectIdsMap = buildAssignedProjectIdsMap(legacy.projects);
+  Object.entries(assignedProjectIdsMap).forEach(([employeeId, assignedProjectIds]) => {
+    operations.push({
+      type: "set",
+      ref: doc(dbInstance, "users", employeeId),
+      data: { assignedProjectIds, updatedAt: isoNow() },
+      options: { merge: true },
+    });
+  });
+
+  operations.push({
+    type: "set",
+    ref: metaRef,
+    data: { schemaVersion: SCHEMA_VERSION, migratedAt: isoNow(), migratedBy: actor?.uid || "", legacyRoot: legacyRootRef.path },
+    options: { merge: true },
+  });
+
+  await commitBatchOperations(dbInstance, operations);
+  return { migrated: true };
 }
 
 function normalizeComments(comments) {
@@ -2285,13 +2756,26 @@ function ProjectDetailPage({ profile, project, employees, onBack, onSaveProject,
   );
 }
 
-function ProjectsPage({ profile, projects, employees, selectedProjectId, onSelectProject, onBackToList, onCreateProject, onSaveProject, onDeleteProject, loading, progressByProjectId }) {
+function ProjectsPage({ profile, projects, employees, selectedProjectId, selectedProject, projectReady, onSelectProject, onBackToList, onCreateProject, onSaveProject, onDeleteProject, loading, progressByProjectId }) {
   const [showCreate, setShowCreate] = useState(false);
   const editable = canEdit(profile.role);
-  const selectedProject = projects.find((project) => project.id === selectedProjectId) || null;
   const employeeMap = useMemo(() => indexById(employees), [employees]);
 
   if (selectedProject) {
+    if (!projectReady) {
+      return (
+        <div>
+          <PageHeader title="Loyiha yuklanmoqda" subtitle="Topshiriqlar, kontent, media plan va boshqa bo'limlar sinxronlanmoqda." action={<Button variant="secondary" onClick={onBackToList}>Orqaga</Button>} />
+          <Card>
+            <div style={{ display: "grid", gap: 14 }}>
+              <SkeletonBlock width="34%" height={24} />
+              <SkeletonBlock width="56%" height={18} />
+              <GridSkeleton cards={5} minWidth={240} />
+            </div>
+          </Card>
+        </div>
+      );
+    }
     return (
       <ProjectDetailPage
         profile={profile}
@@ -2387,6 +2871,7 @@ function TeamPage({ profile, employees, projects, employeeMetricsById, assignmen
   const [editingEmployee, setEditingEmployee] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const editable = canManagePeople(profile.role);
+  const canViewCompensation = canManagePeople(profile.role);
   const grouped = useMemo(
     () =>
       DEPARTMENTS.map((dept) => ({
@@ -2452,7 +2937,7 @@ function TeamPage({ profile, employees, projects, employeeMetricsById, assignmen
                       </div>
                       <div style={{ marginTop: 12, display: "grid", gap: 6, fontSize: 12, color: T.colors.textSecondary }}>
                         <div>{employee.email || "Email ko'rsatilmagan"}</div>
-                        <div>{employee.salary ? `${toMoney(employee.salary)} so'm / oy` : "Oylik kiritilmagan"}</div>
+                        <div>{canViewCompensation ? (employee.salary ? `${toMoney(employee.salary)} so'm / oy` : "Oylik kiritilmagan") : "Oylik faqat CEO/Admin ga ko'rinadi"}</div>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           {projectAssignments.length ? projectAssignments.map((project) => (
                             <span key={project.id} style={{ background: T.colors.accentSoft, color: T.colors.accent, padding: "3px 8px", borderRadius: T.radius.full, fontSize: 11, fontWeight: 600 }}>
@@ -2476,6 +2961,7 @@ function TeamPage({ profile, employees, projects, employeeMetricsById, assignmen
         <Modal title="Yangi xodim qo'shish" onClose={() => setShowAdd(false)} width={620}>
           <EmployeeEditForm
             employee={{ name: "", role: "", dept: "SMM bo'limi", email: "", salary: 0, kpiBase: 80, load: 50 }}
+            showCompensation={canViewCompensation}
             submitLabel="Xodimni saqlash"
             onCancel={() => setShowAdd(false)}
             onSave={(next) => {
@@ -2490,6 +2976,7 @@ function TeamPage({ profile, employees, projects, employeeMetricsById, assignmen
         <Modal title="Xodim ma'lumotini yangilash" onClose={() => setEditingEmployee(null)} width={640}>
           <EmployeeEditForm
             employee={editingEmployee}
+            showCompensation={canViewCompensation}
             onCancel={() => setEditingEmployee(null)}
             onSave={(next) => {
               onSaveEmployee(next);
@@ -2502,7 +2989,7 @@ function TeamPage({ profile, employees, projects, employeeMetricsById, assignmen
   );
 }
 
-function EmployeeEditForm({ employee, onCancel, onSave, submitLabel = "Saqlash" }) {
+function EmployeeEditForm({ employee, onCancel, onSave, submitLabel = "Saqlash", showCompensation = true }) {
   const [form, setForm] = useState({ ...employee, salary: String(employee.salary || ""), kpiBase: String(employee.kpiBase || 80), load: String(employee.load || 0), email: employee.email || "" });
   return (
     <div>
@@ -2511,7 +2998,7 @@ function EmployeeEditForm({ employee, onCancel, onSave, submitLabel = "Saqlash" 
         <Field label="Lavozim" value={form.role} onChange={(value) => setForm((prev) => ({ ...prev, role: value }))} />
         <Field label="Bo'lim" value={form.dept} onChange={(value) => setForm((prev) => ({ ...prev, dept: value }))} options={DEPARTMENTS} />
         <Field label="Email" value={form.email} onChange={(value) => setForm((prev) => ({ ...prev, email: value }))} type="email" />
-        <Field label="Oylik" type="number" value={form.salary} onChange={(value) => setForm((prev) => ({ ...prev, salary: value }))} />
+        {showCompensation ? <Field label="Oylik" type="number" value={form.salary} onChange={(value) => setForm((prev) => ({ ...prev, salary: value }))} /> : null}
         <Field label="Bazaviy KPI" type="number" value={form.kpiBase} onChange={(value) => setForm((prev) => ({ ...prev, kpiBase: value }))} />
         <Field label="Bandlik" type="number" value={form.load} onChange={(value) => setForm((prev) => ({ ...prev, load: value }))} />
       </div>
@@ -2522,7 +3009,7 @@ function EmployeeEditForm({ employee, onCancel, onSave, submitLabel = "Saqlash" 
             onSave({
               ...employee,
               ...form,
-              salary: Number(form.salary || 0),
+              salary: showCompensation ? Number(form.salary || 0) : Number(employee.salary || 0),
               kpiBase: Number(form.kpiBase || 80),
               load: Number(form.load || 0),
             })
@@ -2830,7 +3317,7 @@ function WorkflowPage() {
   );
 }
 
-function ChatPage({ profile, employees, messages, onSendMessage, onEditMessage, onMarkRead, loading }) {
+function ChatPage({ profile, employees, messages, onSendMessage, onEditMessage, onMarkRead, onLoadOlder, hasMore, loadingOlder, loading }) {
   const [input, setInput] = useState("");
   const [editingId, setEditingId] = useState("");
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -2893,6 +3380,13 @@ function ChatPage({ profile, employees, messages, onSendMessage, onEditMessage, 
         </div>
 
         <div ref={viewportRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: T.space.xl, display: "flex", flexDirection: "column", gap: 14, background: "linear-gradient(180deg, #ffffff 0%, #fafafe 100%)" }}>
+          {hasMore ? (
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <Button variant="secondary" onClick={onLoadOlder} disabled={loadingOlder} style={{ padding: "8px 14px" }}>
+                {loadingOlder ? "Eski xabarlar yuklanmoqda..." : "Eski xabarlarni ko'rsatish"}
+              </Button>
+            </div>
+          ) : null}
           {loading ? (
             <div style={{ display: "grid", gap: 12 }}>
               {Array.from({ length: 8 }).map((_, index) => (
@@ -2920,6 +3414,8 @@ function ChatPage({ profile, employees, messages, onSendMessage, onEditMessage, 
                         lineHeight: 1.6,
                         boxShadow: mine ? "0 10px 24px rgba(0,113,227,0.16)" : "none",
                         whiteSpace: "pre-wrap",
+                        opacity: message.status === "sending" ? 0.72 : 1,
+                        border: message.status === "failed" ? `1px solid ${T.colors.red}` : "none",
                       }}
                     >
                       {message.text}
@@ -2928,7 +3424,7 @@ function ChatPage({ profile, employees, messages, onSendMessage, onEditMessage, 
                       <div style={{ fontSize: 10, color: T.colors.textTertiary, textAlign: mine ? "right" : "left", display: "flex", gap: 8, flexWrap: "wrap" }}>
                         {String(message.createdAt || "").slice(0, 16).replace("T", " ")}
                         {message.editedAt ? <span>Tahrirlangan</span> : null}
-                        {mine ? <span>{seenByOthers ? "Ko'rildi" : "Yuborildi"}</span> : null}
+                        {mine ? <span>{message.status === "failed" ? "Yuborilmadi" : message.status === "sending" ? "Yuborilmoqda" : seenByOthers ? "Ko'rildi" : "Yuborildi"}</span> : null}
                       </div>
                       <div style={{ display: "inline-flex", gap: 4 }}>
                         {quickReactions.slice(0, 2).map((emoji) => (
@@ -3070,32 +3566,70 @@ function LoadingScreen({ label = "Yuklanmoqda..." }) {
 
 export default function App() {
   const [profile, setProfile] = useState(null);
-  const [crm, setCrm] = useState(EMPTY_CRM);
+  const [projectDocs, setProjectDocs] = useState([]);
+  const [publicUsers, setPublicUsers] = useState([]);
+  const [privateUsers, setPrivateUsers] = useState({});
+  const [shootDocs, setShootDocs] = useState([]);
+  const [meetingDocs, setMeetingDocs] = useState([]);
+  const [notificationDocs, setNotificationDocs] = useState([]);
+  const [auditDocs, setAuditDocs] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
+  const [selectedProjectWorkspace, setSelectedProjectWorkspace] = useState(EMPTY_PROJECT_WORKSPACE);
   const [page, setPage] = useState("dashboard");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [booting, setBooting] = useState(true);
-  const [crmReady, setCrmReady] = useState(false);
+  const [projectsReady, setProjectsReady] = useState(false);
+  const [publicUsersReady, setPublicUsersReady] = useState(false);
+  const [privateUsersReady, setPrivateUsersReady] = useState(false);
+  const [projectWorkspaceReady, setProjectWorkspaceReady] = useState(false);
   const [chatReady, setChatReady] = useState(false);
+  const [chatHasMore, setChatHasMore] = useState(false);
+  const [chatLoadingOlder, setChatLoadingOlder] = useState(false);
+  const [chatCursor, setChatCursor] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [toasts, setToasts] = useState([]);
   const pendingRegistrationRef = useRef(null);
-  const crmRef = useRef(EMPTY_CRM);
-  const latestLocalMutationRef = useRef("");
-  const chatSeededRef = useRef(false);
-  const rootRef = hasFirebaseConfig && db ? doc(db, "crm", ROOT_DOC_ID) : null;
-  const chatCollectionRef = hasFirebaseConfig && db ? collection(db, "crm", ROOT_DOC_ID, "chatMessages") : null;
+  const migrationRef = useRef(false);
+  const projectDocsRef = useRef([]);
+  const publicUsersRef = useRef([]);
+  const selectedProjectRef = useRef(null);
+  const initialCacheRef = useRef(readCache(CRM_CACHE_KEY, {}));
+
+  const legacyRootRef = hasFirebaseConfig && db ? doc(db, "crm", ROOT_DOC_ID) : null;
+  const projectsCollectionRef = hasFirebaseConfig && db ? collection(db, "projects") : null;
+  const usersCollectionRef = hasFirebaseConfig && db ? collection(db, "users") : null;
+  const userPrivateCollectionRef = hasFirebaseConfig && db ? collection(db, "userPrivate") : null;
+  const shootsCollectionRef = hasFirebaseConfig && db ? collection(db, "shoots") : null;
+  const meetingsCollectionRef = hasFirebaseConfig && db ? collection(db, "meetings") : null;
+  const notificationsCollectionRef = hasFirebaseConfig && db ? collection(db, "notifications") : null;
+  const auditLogsCollectionRef = hasFirebaseConfig && db ? collection(db, "auditLogs") : null;
+  const chatCollectionRef = hasFirebaseConfig && db ? collection(db, "chatMessages") : null;
 
   function pushToast(text, tone = "success") {
     if (!text) return;
     setToasts((current) => [...current.slice(-2), { id: makeId("toast"), text, tone }]);
   }
 
+  function applyOptimisticMetaDocs(metaDocs) {
+    metaDocs.forEach((item) => {
+      if (item.collection === "notifications") {
+        setNotificationDocs((current) => [normalizeStoredRecord(item.id, item.data), ...current].slice(0, 120));
+      }
+      if (item.collection === "auditLogs") {
+        setAuditDocs((current) => [normalizeStoredRecord(item.id, item.data), ...current].slice(0, 180));
+      }
+    });
+  }
+
   useEffect(() => {
-    crmRef.current = crm;
-  }, [crm]);
+    projectDocsRef.current = projectDocs;
+  }, [projectDocs]);
+
+  useEffect(() => {
+    publicUsersRef.current = publicUsers;
+  }, [publicUsers]);
 
   useEffect(() => {
     if (!toasts.length) return undefined;
@@ -3106,7 +3640,7 @@ export default function App() {
   }, [toasts]);
 
   useEffect(() => {
-    if (!hasFirebaseConfig || !auth) {
+    if (!hasFirebaseConfig || !auth || !db) {
       setBooting(false);
       return undefined;
     }
@@ -3116,44 +3650,81 @@ export default function App() {
       try {
         if (!firebaseUser) {
           setProfile(null);
-          setCrm(EMPTY_CRM);
+          setProjectDocs([]);
+          setPublicUsers([]);
+          setPrivateUsers({});
+          setShootDocs([]);
+          setMeetingDocs([]);
+          setNotificationDocs([]);
+          setAuditDocs([]);
           setChatMessages([]);
-          chatSeededRef.current = false;
-          setCrmReady(false);
+          setSelectedProjectWorkspace(EMPTY_PROJECT_WORKSPACE);
+          setProjectsReady(false);
+          setPublicUsersReady(false);
+          setPrivateUsersReady(false);
+          setProjectWorkspaceReady(false);
           setChatReady(false);
+          setChatHasMore(false);
+          setChatCursor("");
+          migrationRef.current = false;
           setBooting(false);
           return;
         }
 
         const userRef = doc(db, "users", firebaseUser.uid);
+        const privateRef = doc(db, "userPrivate", firebaseUser.uid);
         const snapshot = await getDoc(userRef);
         const fixedRole = FIXED_ROLE_BY_EMAIL[(firebaseUser.email || "").toLowerCase()];
         const registration = pendingRegistrationRef.current;
+        const roleCode = snapshot.data()?.roleCode || fixedRole?.role || "EMPLOYEE";
         const baseName = registration?.name || firebaseUser.displayName || fixedRole?.name || firebaseUser.email?.split("@")[0] || "Xodim";
-        const nextProfile = snapshot.exists()
-          ? {
-              ...snapshot.data(),
-              email: firebaseUser.email || snapshot.data().email || "",
-              name: snapshot.data().name || baseName,
-              avatarUrl: firebaseUser.photoURL || snapshot.data().avatarUrl || "",
-            }
-          : {
-              uid: firebaseUser.uid,
+        const currentUser = snapshot.exists()
+          ? normalizeStoredUser(firebaseUser.uid, snapshot.data())
+          : employeeToPublicDoc({
+              id: firebaseUser.uid,
               email: firebaseUser.email || "",
               name: baseName,
               avatarUrl: firebaseUser.photoURL || "",
-              role: fixedRole?.role || "EMPLOYEE",
+              roleCode,
+              role: registration?.title || fixedRole?.title || ROLE_META[roleCode]?.title || "Xodim",
               dept: registration?.dept || fixedRole?.dept || "SMM bo'limi",
-              title: registration?.title || fixedRole?.title || "Xodim",
-              salary: 0,
-              kpiBase: 80,
-              load: 0,
+              status: "active",
+              assignedProjectIds: [],
               createdAt: isoNow(),
-            };
+              updatedAt: isoNow(),
+            });
 
-        await setDoc(userRef, nextProfile, { merge: true });
+        const nextUserDoc = {
+          ...currentUser,
+          uid: firebaseUser.uid,
+          email: firebaseUser.email || currentUser.email || "",
+          name: currentUser.name || baseName,
+          avatarUrl: firebaseUser.photoURL || currentUser.avatarUrl || "",
+          roleCode,
+          role: currentUser.role || registration?.title || fixedRole?.title || ROLE_META[roleCode]?.title || "Xodim",
+          title: currentUser.title || registration?.title || fixedRole?.title || ROLE_META[roleCode]?.title || "Xodim",
+          dept: currentUser.dept || registration?.dept || fixedRole?.dept || "SMM bo'limi",
+          status: currentUser.status || "active",
+          createdAt: currentUser.createdAt || isoNow(),
+          updatedAt: isoNow(),
+        };
+
+        await setDoc(userRef, nextUserDoc, { merge: true });
+        const privateSnapshot = canManagePeople(roleCode) ? await getDoc(privateRef) : null;
         pendingRegistrationRef.current = null;
-        setProfile(nextProfile);
+        setProfile({
+          uid: firebaseUser.uid,
+          email: nextUserDoc.email,
+          name: nextUserDoc.name,
+          avatarUrl: nextUserDoc.avatarUrl || "",
+          role: roleCode,
+          dept: nextUserDoc.dept,
+          title: nextUserDoc.title,
+          salary: Number(privateSnapshot?.data()?.salary || 0),
+          kpiBase: Number(privateSnapshot?.data()?.kpiBase || 80),
+          load: Number(privateSnapshot?.data()?.load || 0),
+          createdAt: nextUserDoc.createdAt,
+        });
         setAuthError("");
       } catch (error) {
         setAuthError(humanizeAuthError(error));
@@ -3166,40 +3737,230 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!profile || !rootRef) return undefined;
-    setCrmReady(false);
-    const cachedCrm = readCache(CRM_CACHE_KEY, null);
-    if (cachedCrm) {
-      const normalizedCachedCrm = normalizeCrmPayload(cachedCrm);
-      crmRef.current = normalizedCachedCrm;
+    if (!profile || !legacyRootRef || migrationRef.current) return undefined;
+    let cancelled = false;
+    migrationRef.current = true;
+    (async () => {
+      try {
+        const result = await migrateLegacyRootSchema({ dbInstance: db, legacyRootRef, actor: profile });
+        if (!cancelled && result.migrated) {
+          pushToast("Firestore schema yangi collection modeliga ko'chirildi.");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setAuthError(humanizeAuthError(error));
+          pushToast(humanizeAuthError(error), "error");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.uid, legacyRootRef]);
+
+  useEffect(() => {
+    if (!profile || !projectsCollectionRef) return undefined;
+    setProjectsReady(false);
+    const cachedProjects = Array.isArray(initialCacheRef.current.projects) ? initialCacheRef.current.projects : [];
+    if (cachedProjects.length) {
       startTransition(() => {
-        setCrm(normalizedCachedCrm);
-        setCrmReady(true);
+        setProjectDocs(cachedProjects.map((item) => normalizeStoredProjectMeta(item.id, item)));
+        setProjectsReady(true);
       });
     }
-    const unsubscribe = onSnapshot(rootRef, async (snapshot) => {
-      if (!snapshot.exists()) {
-        await setDoc(rootRef, { payload: EMPTY_CRM }, { merge: true });
-        setCrmReady(true);
-        return;
-      }
-      const nextCrm = normalizeCrmPayload(snapshot.data().payload);
-      const incomingStamp = String(nextCrm.meta?.updatedAt || "");
-      const localStamp = String(latestLocalMutationRef.current || "");
-      if (localStamp && (!incomingStamp || incomingStamp < localStamp)) {
-        return;
-      }
-      if (localStamp && incomingStamp && incomingStamp >= localStamp) {
-        latestLocalMutationRef.current = "";
-      }
-      crmRef.current = nextCrm;
+    const unsubscribe = onSnapshot(projectsCollectionRef, (snapshot) => {
+      const nextProjects = sortByRecent(snapshot.docs.map((entry) => normalizeStoredProjectMeta(entry.id, entry.data())), "updatedAt").filter((project) => !project.archived);
       startTransition(() => {
-        setCrm(nextCrm);
-        setCrmReady(true);
+        setProjectDocs(nextProjects);
+        setProjectsReady(true);
       });
     });
     return () => unsubscribe();
-  }, [profile, rootRef]);
+  }, [profile?.uid, projectsCollectionRef]);
+
+  useEffect(() => {
+    if (!profile || !usersCollectionRef) return undefined;
+    setPublicUsersReady(false);
+    const cachedUsers = Array.isArray(initialCacheRef.current.users) ? initialCacheRef.current.users : [];
+    if (cachedUsers.length) {
+      startTransition(() => {
+        setPublicUsers(cachedUsers.map((item) => normalizeStoredUser(item.id, item)));
+        setPublicUsersReady(true);
+      });
+    }
+    const unsubscribe = onSnapshot(usersCollectionRef, (snapshot) => {
+      const nextUsers = snapshot.docs.map((entry) => normalizeStoredUser(entry.id, entry.data()));
+      nextUsers.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+      startTransition(() => {
+        setPublicUsers(nextUsers);
+        setPublicUsersReady(true);
+      });
+    });
+    return () => unsubscribe();
+  }, [profile?.uid, usersCollectionRef]);
+
+  useEffect(() => {
+    if (!profile || !userPrivateCollectionRef) return undefined;
+    if (!canManagePeople(profile.role)) {
+      setPrivateUsers({});
+      setPrivateUsersReady(true);
+      return undefined;
+    }
+    setPrivateUsersReady(false);
+    const cachedPrivateUsers = initialCacheRef.current.userPrivate || {};
+    if (Object.keys(cachedPrivateUsers).length) {
+      startTransition(() => {
+        const next = Object.fromEntries(Object.entries(cachedPrivateUsers).map(([id, item]) => [id, normalizeStoredPrivateUser(id, item)]));
+        setPrivateUsers(next);
+        setPrivateUsersReady(true);
+      });
+    }
+    const unsubscribe = onSnapshot(userPrivateCollectionRef, (snapshot) => {
+      const nextPrivateUsers = {};
+      snapshot.docs.forEach((entry) => {
+        nextPrivateUsers[entry.id] = normalizeStoredPrivateUser(entry.id, entry.data());
+      });
+      startTransition(() => {
+        setPrivateUsers(nextPrivateUsers);
+        setPrivateUsersReady(true);
+      });
+    });
+    return () => unsubscribe();
+  }, [profile?.uid, userPrivateCollectionRef, profile?.role]);
+
+  useEffect(() => {
+    if (!profile || !shootsCollectionRef) return undefined;
+    const cachedShoots = Array.isArray(initialCacheRef.current.shoots) ? initialCacheRef.current.shoots : [];
+    if (cachedShoots.length) {
+      startTransition(() => {
+        setShootDocs(cachedShoots.map((item) => normalizeStoredRecord(item.id, item)));
+      });
+    }
+    const unsubscribe = onSnapshot(shootsCollectionRef, (snapshot) => {
+      const nextShoots = snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
+      startTransition(() => setShootDocs(nextShoots));
+    });
+    return () => unsubscribe();
+  }, [profile?.uid, shootsCollectionRef]);
+
+  useEffect(() => {
+    if (!profile || !meetingsCollectionRef) return undefined;
+    const cachedMeetings = Array.isArray(initialCacheRef.current.meetings) ? initialCacheRef.current.meetings : [];
+    if (cachedMeetings.length) {
+      startTransition(() => {
+        setMeetingDocs(cachedMeetings.map((item) => normalizeStoredRecord(item.id, item)));
+      });
+    }
+    const unsubscribe = onSnapshot(meetingsCollectionRef, (snapshot) => {
+      const nextMeetings = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "date");
+      startTransition(() => setMeetingDocs(nextMeetings));
+    });
+    return () => unsubscribe();
+  }, [profile?.uid, meetingsCollectionRef]);
+
+  useEffect(() => {
+    if (!profile || !notificationsCollectionRef) return undefined;
+    const cachedNotifications = Array.isArray(initialCacheRef.current.notifications) ? initialCacheRef.current.notifications : [];
+    if (cachedNotifications.length) {
+      startTransition(() => {
+        setNotificationDocs(cachedNotifications.map((item) => normalizeStoredRecord(item.id, item)));
+      });
+    }
+    const unsubscribe = onSnapshot(notificationsCollectionRef, (snapshot) => {
+      const nextNotifications = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "createdAt").slice(0, 120);
+      startTransition(() => setNotificationDocs(nextNotifications));
+    });
+    return () => unsubscribe();
+  }, [profile?.uid, notificationsCollectionRef]);
+
+  useEffect(() => {
+    if (!profile || !auditLogsCollectionRef) return undefined;
+    const cachedAudit = Array.isArray(initialCacheRef.current.auditLog) ? initialCacheRef.current.auditLog : [];
+    if (cachedAudit.length) {
+      startTransition(() => {
+        setAuditDocs(cachedAudit.map((item) => normalizeStoredRecord(item.id, item)));
+      });
+    }
+    const unsubscribe = onSnapshot(auditLogsCollectionRef, (snapshot) => {
+      const nextAuditDocs = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "createdAt").slice(0, 180);
+      startTransition(() => setAuditDocs(nextAuditDocs));
+    });
+    return () => unsubscribe();
+  }, [profile?.uid, auditLogsCollectionRef]);
+
+  useEffect(() => {
+    if (!profile || !selectedProjectId || !db) {
+      setSelectedProjectWorkspace(EMPTY_PROJECT_WORKSPACE);
+      setProjectWorkspaceReady(false);
+      return undefined;
+    }
+
+    setProjectWorkspaceReady(false);
+    const cachedWorkspace = readCache(projectWorkspaceCacheKey(selectedProjectId), null);
+    if (cachedWorkspace) {
+      startTransition(() => {
+        setSelectedProjectWorkspace({
+          tasks: Array.isArray(cachedWorkspace.tasks) ? cachedWorkspace.tasks : [],
+          contentPlan: Array.isArray(cachedWorkspace.contentPlan) ? cachedWorkspace.contentPlan : [],
+          mediaPlan: Array.isArray(cachedWorkspace.mediaPlan) ? cachedWorkspace.mediaPlan : [],
+          plans: cachedWorkspace.plans || { daily: [], weekly: [], monthly: [] },
+          calls: Array.isArray(cachedWorkspace.calls) ? cachedWorkspace.calls : [],
+        });
+        setProjectWorkspaceReady(true);
+      });
+    } else {
+      setSelectedProjectWorkspace(EMPTY_PROJECT_WORKSPACE);
+    }
+
+    const projectRef = doc(db, "projects", selectedProjectId);
+    const loaded = { tasks: false, content: false, media: false, plans: false, calls: false };
+
+    function commitWorkspacePatch(key, patch) {
+      loaded[key] = true;
+      startTransition(() => {
+        setSelectedProjectWorkspace((current) => {
+          const next = { ...current, ...patch };
+          writeCache(projectWorkspaceCacheKey(selectedProjectId), next);
+          return next;
+        });
+        if (Object.values(loaded).every(Boolean)) {
+          setProjectWorkspaceReady(true);
+        }
+      });
+    }
+
+    function handleWorkspaceError(error) {
+      setAuthError(humanizeAuthError(error));
+      setProjectWorkspaceReady(true);
+    }
+
+    const unsubscribes = [
+      onSnapshot(collection(projectRef, "tasks"), (snapshot) => {
+        const tasks = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "updatedAt").reverse();
+        commitWorkspacePatch("tasks", { tasks });
+      }, handleWorkspaceError),
+      onSnapshot(collection(projectRef, "content"), (snapshot) => {
+        const contentPlan = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "updatedAt").reverse();
+        commitWorkspacePatch("content", { contentPlan });
+      }, handleWorkspaceError),
+      onSnapshot(collection(projectRef, "mediaPlans"), (snapshot) => {
+        const mediaPlan = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "updatedAt").reverse();
+        commitWorkspacePatch("media", { mediaPlan });
+      }, handleWorkspaceError),
+      onSnapshot(collection(projectRef, "plans"), (snapshot) => {
+        const planItems = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "updatedAt").reverse();
+        commitWorkspacePatch("plans", { plans: splitPlans(planItems) });
+      }, handleWorkspaceError),
+      onSnapshot(collection(projectRef, "calls"), (snapshot) => {
+        const calls = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "updatedAt").reverse();
+        commitWorkspacePatch("calls", { calls });
+      }, handleWorkspaceError),
+    ];
+
+    return () => {
+      unsubscribes.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [profile?.uid, selectedProjectId]);
 
   useEffect(() => {
     if (!profile || !chatCollectionRef) return undefined;
@@ -3208,17 +3969,26 @@ export default function App() {
     if (Array.isArray(cachedMessages) && cachedMessages.length) {
       startTransition(() => {
         setChatMessages(cachedMessages);
+        setChatCursor(cachedMessages[0]?.createdAt || "");
+        setChatHasMore(cachedMessages.length >= 60);
         setChatReady(true);
       });
     }
-    const unsubscribe = onSnapshot(query(chatCollectionRef, orderBy("createdAt"), limitToLast(120)), (snapshot) => {
-      const nextMessages = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+    const unsubscribe = onSnapshot(query(chatCollectionRef, orderBy("createdAt"), limitToLast(60)), (snapshot) => {
+      const liveMessages = snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
+      const oldestLiveCreatedAt = liveMessages[0]?.createdAt || "";
       startTransition(() => {
-        if (nextMessages.length) {
-          setChatMessages(nextMessages);
-        } else {
-          setChatMessages(sortByRecent(crmRef.current.chatMessages, "createdAt").reverse());
-        }
+        setChatMessages((current) => {
+          const olderMessages = current.filter((message) => oldestLiveCreatedAt && String(message.createdAt || "") < String(oldestLiveCreatedAt));
+          const merged = [...olderMessages, ...liveMessages];
+          const deduped = Object.values(indexById(merged)).sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+          return deduped;
+        });
+        setChatCursor((current) => {
+          if (current && oldestLiveCreatedAt) return String(current) < String(oldestLiveCreatedAt) ? current : oldestLiveCreatedAt;
+          return current || oldestLiveCreatedAt;
+        });
+        setChatHasMore(liveMessages.length >= 60 || Boolean(chatCursor));
         setChatReady(true);
       });
     });
@@ -3226,115 +3996,39 @@ export default function App() {
   }, [profile?.uid, chatCollectionRef]);
 
   useEffect(() => {
-    if (!profile || !chatCollectionRef || chatSeededRef.current) return undefined;
-    const rootMessages = normalizeCrmPayload(crmRef.current).chatMessages;
-    if (!rootMessages.length) {
-      chatSeededRef.current = true;
-      return undefined;
-    }
-    let cancelled = false;
-    (async () => {
-      const snapshot = await getDocs(chatCollectionRef);
-      if (cancelled || !snapshot.empty) {
-        chatSeededRef.current = true;
-        if (!cancelled && rootMessages.length) {
-          await commitMutation(
-            (current) => (current.chatMessages.length ? { ...current, chatMessages: [] } : current),
-            { skipAudit: true, silent: true }
-          );
-        }
-        return;
-      }
-      const batch = writeBatch(db);
-      rootMessages.forEach((message) => {
-        const nextMessage = {
-          userId: message.userId || "",
-          authorName: message.authorName || "Noma'lum",
-          text: message.text || "",
-          createdAt: message.createdAt || isoNow(),
-          editedAt: message.editedAt || null,
-          readBy: message.readBy || (message.userId ? { [message.userId]: true } : {}),
-        };
-        batch.set(doc(chatCollectionRef, message.id || makeId("chat")), nextMessage);
-      });
-      await batch.commit();
-      chatSeededRef.current = true;
-      if (!cancelled) {
-        await commitMutation(
-          (current) => (current.chatMessages.length ? { ...current, chatMessages: [] } : current),
-          { skipAudit: true, silent: true }
-        );
-      }
-    })().catch(() => {
-      chatSeededRef.current = true;
+    if (!profile) return;
+    writeCache(CRM_CACHE_KEY, {
+      projects: projectDocs,
+      users: publicUsers,
+      userPrivate: privateUsers,
+      shoots: shootDocs,
+      meetings: meetingDocs,
+      notifications: notificationDocs,
+      auditLog: auditDocs,
     });
-    return () => {
-      cancelled = true;
-    };
-  }, [profile?.uid, chatCollectionRef, crm.chatMessages.length]);
-
-  useEffect(() => {
-    if (!profile || !crmReady) return;
-    writeCache(CRM_CACHE_KEY, crm);
-  }, [profile?.uid, crm, crmReady]);
+  }, [profile?.uid, projectDocs, publicUsers, privateUsers, shootDocs, meetingDocs, notificationDocs, auditDocs]);
 
   useEffect(() => {
     if (!profile || !chatReady) return;
-    writeCache(CHAT_CACHE_KEY, chatMessages.slice(-120));
+    writeCache(CHAT_CACHE_KEY, chatMessages.slice(-160));
   }, [profile?.uid, chatMessages, chatReady]);
 
-  async function commitMutation(recipe, meta = {}) {
-    if (!rootRef || !profile) return;
-    const previous = crmRef.current;
-    const optimistic = finalizeMutationPayload(recipe(previous), previous, meta, profile);
-    latestLocalMutationRef.current = optimistic.meta?.updatedAt || "";
-    crmRef.current = optimistic;
-    startTransition(() => setCrm(optimistic));
-    if (!meta.silent) {
-      setSyncing(true);
-    }
-    try {
-      await runTransaction(db, async (transaction) => {
-        const snapshot = await transaction.get(rootRef);
-        const current = normalizeCrmPayload(snapshot.exists() ? snapshot.data().payload : EMPTY_CRM);
-        const next = finalizeMutationPayload(recipe(current), current, meta, profile);
-        transaction.set(rootRef, { payload: next }, { merge: false });
-      });
-      const toastText = meta.toastText || (meta.page === "chat" ? "" : meta.notifyText);
-      if (toastText && !meta.silent) {
-        pushToast(toastText);
-      }
-    } catch (error) {
-      latestLocalMutationRef.current = String(previous.meta?.updatedAt || "");
-      crmRef.current = previous;
-      startTransition(() => setCrm(previous));
-      setAuthError(humanizeAuthError(error));
-      pushToast(humanizeAuthError(error), "error");
-    } finally {
-      if (!meta.silent) {
-        setSyncing(false);
-      }
-    }
-  }
+  const usersReady = publicUsersReady && (!canManagePeople(profile?.role) || privateUsersReady);
+  const crmReady = projectsReady && usersReady;
+  const employees = useMemo(() => visibleEmployees(profile, mergeEmployeeDocs(publicUsers, privateUsers, profile?.role, projectDocs), projectDocs), [profile, publicUsers, privateUsers, projectDocs]);
+  const projects = useMemo(() => visibleProjects(profile, projectDocs), [profile, projectDocs]);
+  const selectedProject = useMemo(() => {
+    if (!selectedProjectId) return null;
+    const baseProject = projectDocs.find((project) => project.id === selectedProjectId);
+    return baseProject ? hydrateProject(baseProject, selectedProjectWorkspace) : null;
+  }, [selectedProjectId, projectDocs, selectedProjectWorkspace]);
+  const shoots = useMemo(() => visibleShoots(profile, shootDocs, projectDocs), [profile, shootDocs, projectDocs]);
+  const projectCaches = useMemo(() => buildProjectCaches(projects), [projects]);
+  const unreadCount = useMemo(() => (profile ? unreadNotifications(notificationDocs, profile.uid) : 0), [notificationDocs, profile]);
 
   useEffect(() => {
-    if (!profile) return;
-    commitMutation(
-      (current) => {
-        const nextEmployees = upsertEmployee(current.employees, profile);
-        const unchanged = JSON.stringify(nextEmployees) === JSON.stringify(current.employees);
-        if (unchanged) return current;
-        return { ...current, employees: nextEmployees };
-      },
-      { skipAudit: true, silent: true }
-    );
-  }, [profile?.uid]);
-
-  const projects = useMemo(() => visibleProjects(profile, crm.projects), [profile, crm.projects]);
-  const employees = useMemo(() => visibleEmployees(profile, crm.employees, crm.projects), [profile, crm.employees, crm.projects]);
-  const shoots = useMemo(() => visibleShoots(profile, crm.shoots, crm.projects), [profile, crm.shoots, crm.projects]);
-  const projectCaches = useMemo(() => buildProjectCaches(projects), [projects]);
-  const unreadCount = useMemo(() => (profile ? unreadNotifications(crm.notifications, profile.uid) : 0), [crm.notifications, profile]);
+    selectedProjectRef.current = selectedProject;
+  }, [selectedProject]);
 
   function navigate(nextPage) {
     setPage(nextPage);
@@ -3346,18 +4040,54 @@ export default function App() {
     }
   }
 
+  async function writeMetaDocs(meta, actor) {
+    return createMetaDocs(meta, actor).map((item) => ({
+      type: "set",
+      ref: doc(db, item.collection, item.id),
+      data: item.data,
+      options: { merge: false },
+    }));
+  }
+
+  function nextProjectListAfterSave(projectMetaDoc, projectId, mode = "upsert") {
+    const nextProjects = mode === "delete"
+      ? projectDocsRef.current.filter((item) => item.id !== projectId)
+      : sortByRecent([...projectDocsRef.current.filter((item) => item.id !== projectId), normalizeStoredProjectMeta(projectId, projectMetaDoc)], "updatedAt");
+    return nextProjects.filter((project) => !project.archived);
+  }
+
+  async function syncAssignedProjectIds(ops, nextProjects, affectedUserIds) {
+    const assignmentMap = buildAssignedProjectIdsMap(nextProjects);
+    affectedUserIds.forEach((userId) => {
+      ops.push({
+        type: "set",
+        ref: doc(db, "users", userId),
+        data: { assignedProjectIds: assignmentMap[userId] || [], updatedAt: isoNow() },
+        options: { merge: true },
+      });
+    });
+  }
+
   async function markAllNotificationsRead() {
-    if (!profile) return;
-    await commitMutation(
-      (current) => ({
-        ...current,
-        notifications: current.notifications.map((item) => ({
-          ...item,
-          readBy: { ...(item.readBy || {}), [profile.uid]: true },
-        })),
-      }),
-      { skipAudit: true, silent: true }
-    );
+    if (!profile || !notificationsCollectionRef) return;
+    const unread = notificationDocs.filter((item) => !item.readBy?.[profile.uid]).slice(0, 50);
+    if (!unread.length) return;
+    startTransition(() => {
+      setNotificationDocs((current) =>
+        current.map((item) => (unread.some((entry) => entry.id === item.id) ? { ...item, readBy: { ...(item.readBy || {}), [profile.uid]: true } } : item))
+      );
+    });
+    try {
+      const operations = unread.map((item) => ({
+        type: "set",
+        ref: doc(db, "notifications", item.id),
+        data: { readBy: { ...(item.readBy || {}), [profile.uid]: true } },
+        options: { merge: true },
+      }));
+      await commitBatchOperations(db, operations);
+    } catch (error) {
+      setAuthError(humanizeAuthError(error));
+    }
   }
 
   async function handleEmailLogin(email, password) {
@@ -3408,164 +4138,370 @@ export default function App() {
     await signOut(auth);
     setPage("dashboard");
     setSelectedProjectId("");
-    setChatMessages([]);
   }
 
   async function createProject(project) {
     if (!canEdit(profile?.role)) return;
-    await commitMutation(
-      (current) => ({
-        ...current,
-        projects: [
-          ...current.projects,
-          normalizeProject({
-            ...project,
-            id: makeId("project"),
-            tasks: [],
-            contentPlan: [],
-            mediaPlan: [],
-            plans: { daily: [], weekly: [], monthly: [] },
-            calls: [],
-            report: { budget: 0, leads: 0, cpl: 0, sales: 0, roi: 0 },
-          }),
-        ],
-      }),
-      { notifyText: `Yangi loyiha qo'shildi: ${project.name}`, auditText: `Loyiha yaratildi: ${project.name}`, page: "projects" }
-    );
+    const nextProject = normalizeProject({
+      ...project,
+      id: makeId("project"),
+      tasks: [],
+      contentPlan: [],
+      mediaPlan: [],
+      plans: { daily: [], weekly: [], monthly: [] },
+      calls: [],
+      report: { budget: 0, leads: 0, cpl: 0, sales: 0, roi: 0 },
+      createdAt: isoNow(),
+      createdBy: profile.uid,
+      updatedAt: isoNow(),
+      updatedBy: profile.uid,
+    });
+    const projectRef = doc(db, "projects", nextProject.id);
+    const projectMetaDoc = projectMetaDocFromProject(nextProject, profile, nextProject);
+    const metaDocs = createMetaDocs({ notifyText: `Yangi loyiha qo'shildi: ${nextProject.name}`, auditText: `Loyiha yaratildi: ${nextProject.name}`, page: "projects" }, profile);
+    const nextProjects = nextProjectListAfterSave(projectMetaDoc, nextProject.id);
+    const operations = [
+      { type: "set", ref: projectRef, data: projectMetaDoc, options: { merge: true } },
+      ...metaDocs.map((item) => ({ type: "set", ref: doc(db, item.collection, item.id), data: item.data, options: { merge: false } })),
+    ];
+    await syncAssignedProjectIds(operations, nextProjects, new Set([nextProject.managerId, ...nextProject.teamIds].filter(Boolean)));
+
+    startTransition(() => {
+      setProjectDocs(nextProjects);
+      applyOptimisticMetaDocs(metaDocs);
+    });
+    setSyncing(true);
+    try {
+      await commitBatchOperations(db, operations);
+      pushToast(`Yangi loyiha qo'shildi: ${nextProject.name}`);
+    } catch (error) {
+      setAuthError(humanizeAuthError(error));
+      pushToast(humanizeAuthError(error), "error");
+    } finally {
+      setSyncing(false);
+    }
   }
 
   async function saveProject(project, meta = {}) {
-    if (!canWorkInProject(profile, project)) return;
-    await commitMutation(
-      (current) => ({
-        ...current,
-        projects: current.projects.map((item) => (item.id === project.id ? normalizeProject(project) : item)),
-      }),
-      meta
-    );
+    if (!profile || !db) return;
+    const currentMeta = projectDocsRef.current.find((item) => item.id === project.id);
+    const currentProject = selectedProjectRef.current?.id === project.id ? selectedProjectRef.current : hydrateProject(currentMeta || project);
+    if (!canWorkInProject(profile, currentProject) && !canManageProjectMeta(profile)) return;
+
+    const hasWorkspacePayload =
+      selectedProjectRef.current?.id === project.id ||
+      Array.isArray(project.tasks) ||
+      Array.isArray(project.contentPlan) ||
+      Array.isArray(project.mediaPlan) ||
+      Array.isArray(project.calls) ||
+      Boolean(project.plans);
+
+    const nextProject = normalizeProject({
+      ...currentProject,
+      ...project,
+      tasks: hasWorkspacePayload ? (Array.isArray(project.tasks) ? project.tasks : currentProject.tasks) : currentProject.tasks,
+      contentPlan: hasWorkspacePayload ? (Array.isArray(project.contentPlan) ? project.contentPlan : currentProject.contentPlan) : currentProject.contentPlan,
+      mediaPlan: hasWorkspacePayload ? (Array.isArray(project.mediaPlan) ? project.mediaPlan : currentProject.mediaPlan) : currentProject.mediaPlan,
+      plans: hasWorkspacePayload ? (project.plans || currentProject.plans) : currentProject.plans,
+      calls: hasWorkspacePayload ? (Array.isArray(project.calls) ? project.calls : currentProject.calls) : currentProject.calls,
+    });
+
+    const projectRef = doc(db, "projects", nextProject.id);
+    const projectMetaDoc = projectMetaDocFromProject(nextProject, profile, currentMeta);
+    const nextProjects = nextProjectListAfterSave(projectMetaDoc, nextProject.id);
+    const affectedUsers = new Set([currentMeta?.managerId, ...(currentMeta?.teamIds || []), nextProject.managerId, ...nextProject.teamIds].filter(Boolean));
+    const metaDocs = createMetaDocs(meta, profile);
+    const operations = [
+      { type: "set", ref: projectRef, data: projectMetaDoc, options: { merge: true } },
+      ...metaDocs.map((item) => ({ type: "set", ref: doc(db, item.collection, item.id), data: item.data, options: { merge: false } })),
+    ];
+
+    if (hasWorkspacePayload) {
+      syncCollectionOperations(collection(projectRef, "tasks"), currentProject.tasks, nextProject.tasks).forEach((operation) => operations.push(operation));
+      syncCollectionOperations(collection(projectRef, "content"), currentProject.contentPlan, nextProject.contentPlan).forEach((operation) => operations.push(operation));
+      syncCollectionOperations(collection(projectRef, "mediaPlans"), currentProject.mediaPlan, nextProject.mediaPlan).forEach((operation) => operations.push(operation));
+      syncCollectionOperations(collection(projectRef, "plans"), flattenPlans(currentProject.plans), flattenPlans(nextProject.plans)).forEach((operation) => operations.push(operation));
+      syncCollectionOperations(collection(projectRef, "calls"), currentProject.calls, nextProject.calls).forEach((operation) => operations.push(operation));
+    }
+
+    await syncAssignedProjectIds(operations, nextProjects, affectedUsers);
+
+    startTransition(() => {
+      setProjectDocs(nextProjects);
+      if (selectedProjectId === nextProject.id) {
+        setSelectedProjectWorkspace({
+          tasks: nextProject.tasks,
+          contentPlan: nextProject.contentPlan,
+          mediaPlan: nextProject.mediaPlan,
+          plans: nextProject.plans,
+          calls: nextProject.calls,
+        });
+      }
+      applyOptimisticMetaDocs(metaDocs);
+    });
+
+    if (!meta.silent) setSyncing(true);
+    try {
+      await commitBatchOperations(db, operations);
+      if (meta.toastText || meta.notifyText) pushToast(meta.toastText || meta.notifyText);
+    } catch (error) {
+      setAuthError(humanizeAuthError(error));
+      pushToast(humanizeAuthError(error), "error");
+    } finally {
+      if (!meta.silent) setSyncing(false);
+    }
   }
 
   async function deleteProject(projectId) {
     if (!canEdit(profile?.role)) return;
-    const project = crm.projects.find((item) => item.id === projectId);
-    if (!window.confirm("Loyiha butunlay o'chirilsinmi?")) return;
-    await commitMutation(
-      (current) => ({
-        ...current,
-        projects: current.projects.filter((item) => item.id !== projectId),
-      }),
-      { notifyText: `Loyiha o'chirildi: ${project?.name || "Noma'lum"}`, auditText: `Loyiha o'chirildi: ${project?.name || "Noma'lum"}`, page: "projects" }
-    );
-    setSelectedProjectId("");
+    const project = projectDocsRef.current.find((item) => item.id === projectId);
+    if (!project || !window.confirm("Loyiha butunlay o'chirilsinmi?")) return;
+    const archivedDoc = { ...project, archived: true, updatedAt: isoNow(), updatedBy: profile.uid };
+    const metaDocs = createMetaDocs({ notifyText: `Loyiha o'chirildi: ${project.name}`, auditText: `Loyiha o'chirildi: ${project.name}`, page: "projects" }, profile);
+    const nextProjects = nextProjectListAfterSave(archivedDoc, projectId, "delete");
+    const operations = [
+      { type: "set", ref: doc(db, "projects", projectId), data: archivedDoc, options: { merge: true } },
+      ...metaDocs.map((item) => ({ type: "set", ref: doc(db, item.collection, item.id), data: item.data, options: { merge: false } })),
+    ];
+    await syncAssignedProjectIds(operations, nextProjects, new Set([project.managerId, ...project.teamIds].filter(Boolean)));
+
+    startTransition(() => {
+      setProjectDocs(nextProjects);
+      if (selectedProjectId === projectId) {
+        setSelectedProjectId("");
+        setSelectedProjectWorkspace(EMPTY_PROJECT_WORKSPACE);
+      }
+      applyOptimisticMetaDocs(metaDocs);
+    });
+    setSyncing(true);
+    try {
+      await commitBatchOperations(db, operations);
+      pushToast(`Loyiha o'chirildi: ${project.name}`);
+    } catch (error) {
+      setAuthError(humanizeAuthError(error));
+      pushToast(humanizeAuthError(error), "error");
+    } finally {
+      setSyncing(false);
+    }
   }
 
   async function saveEmployee(nextEmployee) {
     if (!canManagePeople(profile?.role)) return;
-    await commitMutation(
-      (current) => ({
-        ...current,
-        employees: current.employees.some((employee) => employee.id === nextEmployee.id)
-          ? current.employees.map((employee) => (employee.id === nextEmployee.id ? nextEmployee : employee))
-          : [...current.employees, nextEmployee],
-      }),
-      { notifyText: `Xodim ma'lumoti yangilandi: ${nextEmployee.name}`, auditText: `Xodim saqlandi: ${nextEmployee.name}`, page: "team" }
-    );
-    if (db) {
-      await setDoc(doc(db, "users", nextEmployee.id), employeeToProfilePatch(nextEmployee), { merge: true });
+    const employeeId = nextEmployee.id || makeId("employee");
+    const assignedProjectIds = buildAssignedProjectIdsMap(projectDocsRef.current)[employeeId] || [];
+    const nextPublicDoc = employeeToPublicDoc({ ...nextEmployee, id: employeeId, assignedProjectIds, updatedAt: isoNow(), createdAt: nextEmployee.createdAt || isoNow() });
+    const nextPrivateDoc = employeeToPrivateDoc(nextEmployee);
+    const metaDocs = createMetaDocs({ notifyText: `Xodim ma'lumoti yangilandi: ${nextPublicDoc.name}`, auditText: `Xodim saqlandi: ${nextPublicDoc.name}`, page: "team" }, profile);
+
+    startTransition(() => {
+      setPublicUsers((current) => {
+        const map = indexById(current);
+        map[employeeId] = normalizeStoredUser(employeeId, nextPublicDoc);
+        return Object.values(map).sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+      });
+      setPrivateUsers((current) => ({ ...current, [employeeId]: normalizeStoredPrivateUser(employeeId, nextPrivateDoc) }));
+      applyOptimisticMetaDocs(metaDocs);
+    });
+    setSyncing(true);
+    try {
+      await commitBatchOperations(db, [
+        { type: "set", ref: doc(db, "users", employeeId), data: nextPublicDoc, options: { merge: true } },
+        { type: "set", ref: doc(db, "userPrivate", employeeId), data: nextPrivateDoc, options: { merge: true } },
+        ...metaDocs.map((item) => ({ type: "set", ref: doc(db, item.collection, item.id), data: item.data, options: { merge: false } })),
+      ]);
+      pushToast(`Xodim ma'lumoti yangilandi: ${nextPublicDoc.name}`);
+    } catch (error) {
+      setAuthError(humanizeAuthError(error));
+      pushToast(humanizeAuthError(error), "error");
+    } finally {
+      setSyncing(false);
     }
   }
 
   async function createEmployee(nextEmployee) {
-    if (!canManagePeople(profile?.role)) return;
-    const employee = {
+    await saveEmployee({
+      ...nextEmployee,
       id: makeId("employee"),
-      roleCode: "EMPLOYEE",
-      avatarUrl: "",
-      email: nextEmployee.email || "",
-      name: nextEmployee.name || "Yangi xodim",
-      role: nextEmployee.role || "Xodim",
-      dept: nextEmployee.dept || "SMM bo'limi",
-      salary: Number(nextEmployee.salary || 0),
-      kpiBase: Number(nextEmployee.kpiBase || 80),
-      load: Number(nextEmployee.load || 0),
-    };
-    await commitMutation(
-      (current) => ({
-        ...current,
-        employees: [...current.employees, employee],
-      }),
-      { notifyText: `Yangi xodim qo'shildi: ${employee.name}`, auditText: `Xodim yaratildi: ${employee.name}`, page: "team" }
-    );
-    if (db) {
-      await setDoc(doc(db, "users", employee.id), employeeToProfilePatch(employee), { merge: true });
-    }
+      roleCode: nextEmployee.roleCode || "EMPLOYEE",
+      avatarUrl: nextEmployee.avatarUrl || "",
+      status: "active",
+    });
   }
 
   async function deleteEmployee(employeeId) {
     if (!canManagePeople(profile?.role)) return;
-    const employee = crm.employees.find((item) => item.id === employeeId);
-    if (!window.confirm("Xodim kartochkasi o'chirilsinmi?")) return;
-    await commitMutation(
-      (current) => ({
-        ...current,
-        employees: current.employees.filter((item) => item.id !== employeeId),
-        shoots: current.shoots.map((shoot) => (shoot.operatorId === employeeId ? { ...shoot, operatorId: "" } : shoot)),
-        meetings: current.meetings.map((meeting) => (meeting.whoId === employeeId ? { ...meeting, whoId: "" } : meeting)),
-        projects: current.projects.map((project) => ({
-          ...project,
-          managerId: project.managerId === employeeId ? "" : project.managerId,
-          teamIds: project.teamIds.filter((teamId) => teamId !== employeeId),
-          tasks: project.tasks.map((task) => (task.ownerId === employeeId ? { ...task, ownerId: "" } : task)),
-          contentPlan: project.contentPlan.map((item) => (item.ownerId === employeeId ? { ...item, ownerId: "" } : item)),
-          mediaPlan: project.mediaPlan.map((item) => (item.ownerId === employeeId ? { ...item, ownerId: "" } : item)),
-          calls: project.calls.map((item) => (item.whoId === employeeId ? { ...item, whoId: "" } : item)),
-        })),
-      }),
-      { notifyText: `Xodim o'chirildi: ${employee?.name || "Noma'lum"}`, auditText: `Xodim o'chirildi: ${employee?.name || "Noma'lum"}`, page: "team" }
+    const employee = publicUsersRef.current.find((item) => item.id === employeeId);
+    if (!employee || !window.confirm("Xodim kartochkasi o'chirilsinmi?")) return;
+    const affectedProjects = projectDocsRef.current.filter((project) => project.managerId === employeeId || project.teamIds.includes(employeeId));
+    const nextProjects = affectedProjects.reduce(
+      (currentProjects, project) =>
+        currentProjects.map((item) =>
+          item.id === project.id
+            ? normalizeStoredProjectMeta(project.id, {
+                ...project,
+                managerId: project.managerId === employeeId ? "" : project.managerId,
+                teamIds: project.teamIds.filter((teamId) => teamId !== employeeId),
+                updatedAt: isoNow(),
+                updatedBy: profile.uid,
+              })
+            : item
+        ),
+      [...projectDocsRef.current]
     );
+    const metaDocs = createMetaDocs({ notifyText: `Xodim o'chirildi: ${employee.name}`, auditText: `Xodim o'chirildi: ${employee.name}`, page: "team" }, profile);
+    const operations = [
+      { type: "delete", ref: doc(db, "users", employeeId) },
+      { type: "delete", ref: doc(db, "userPrivate", employeeId) },
+      ...metaDocs.map((item) => ({ type: "set", ref: doc(db, item.collection, item.id), data: item.data, options: { merge: false } })),
+    ];
+    affectedProjects.forEach((project) => {
+      const updatedProject = nextProjects.find((item) => item.id === project.id);
+      operations.push({ type: "set", ref: doc(db, "projects", project.id), data: updatedProject, options: { merge: true } });
+    });
+
+    startTransition(() => {
+      setPublicUsers((current) => current.filter((item) => item.id !== employeeId));
+      setPrivateUsers((current) => {
+        const next = { ...current };
+        delete next[employeeId];
+        return next;
+      });
+      setProjectDocs(nextProjects);
+      applyOptimisticMetaDocs(metaDocs);
+    });
+    setSyncing(true);
+    try {
+      await commitBatchOperations(db, operations);
+      pushToast(`Xodim o'chirildi: ${employee.name}`);
+    } catch (error) {
+      setAuthError(humanizeAuthError(error));
+      pushToast(humanizeAuthError(error), "error");
+    } finally {
+      setSyncing(false);
+    }
   }
 
   async function saveShoot(item) {
-    if (!item.projectId || !item.type) return;
-    const relatedProject = crm.projects.find((project) => project.id === item.projectId);
+    if (!item.projectId || !item.type || !shootsCollectionRef) return;
+    const relatedProject = projectDocsRef.current.find((project) => project.id === item.projectId);
     if (!canWorkInProject(profile, relatedProject)) return;
     const nextItem = withRecordMeta(item.id ? item : { ...item, id: makeId("shoot") }, profile);
-    await commitMutation(
-      (current) => ({
-        ...current,
-        shoots: item.id ? current.shoots.map((shoot) => (shoot.id === item.id ? nextItem : shoot)) : [...current.shoots, nextItem],
-      }),
-      { notifyText: "Syomka yozuvi yangilandi", auditText: `Syomka saqlandi: ${nextItem.type}`, page: "shooting" }
-    );
+    const metaDocs = createMetaDocs({ notifyText: "Syomka yozuvi yangilandi", auditText: `Syomka saqlandi: ${nextItem.type}`, page: "shooting" }, profile);
+
+    startTransition(() => {
+      setShootDocs((current) => {
+        const map = indexById(current);
+        map[nextItem.id] = nextItem;
+        return Object.values(map);
+      });
+      applyOptimisticMetaDocs(metaDocs);
+    });
+    setSyncing(true);
+    try {
+      await commitBatchOperations(db, [
+        { type: "set", ref: doc(db, "shoots", nextItem.id), data: nextItem, options: { merge: true } },
+        ...metaDocs.map((entry) => ({ type: "set", ref: doc(db, entry.collection, entry.id), data: entry.data, options: { merge: false } })),
+      ]);
+      pushToast("Syomka yozuvi yangilandi");
+    } catch (error) {
+      setAuthError(humanizeAuthError(error));
+      pushToast(humanizeAuthError(error), "error");
+    } finally {
+      setSyncing(false);
+    }
   }
 
   async function deleteShoot(id) {
-    const relatedShoot = crm.shoots.find((shoot) => shoot.id === id);
-    const relatedProject = crm.projects.find((project) => project.id === relatedShoot?.projectId);
+    const relatedShoot = shootDocs.find((shoot) => shoot.id === id);
+    const relatedProject = projectDocsRef.current.find((project) => project.id === relatedShoot?.projectId);
     if (!canWorkInProject(profile, relatedProject)) return;
     if (!window.confirm("Syomka yozuvi o'chirilsinmi?")) return;
-    await commitMutation(
-      (current) => ({ ...current, shoots: current.shoots.filter((shoot) => shoot.id !== id) }),
-      { notifyText: "Syomka yozuvi o'chirildi", auditText: "Syomka yozuvi o'chirildi", page: "shooting" }
-    );
+    const metaDocs = createMetaDocs({ notifyText: "Syomka yozuvi o'chirildi", auditText: "Syomka yozuvi o'chirildi", page: "shooting" }, profile);
+    startTransition(() => {
+      setShootDocs((current) => current.filter((item) => item.id !== id));
+      applyOptimisticMetaDocs(metaDocs);
+    });
+    setSyncing(true);
+    try {
+      await commitBatchOperations(db, [
+        { type: "delete", ref: doc(db, "shoots", id) },
+        ...metaDocs.map((entry) => ({ type: "set", ref: doc(db, entry.collection, entry.id), data: entry.data, options: { merge: false } })),
+      ]);
+      pushToast("Syomka yozuvi o'chirildi");
+    } catch (error) {
+      setAuthError(humanizeAuthError(error));
+      pushToast(humanizeAuthError(error), "error");
+    } finally {
+      setSyncing(false);
+    }
   }
 
   async function addMeeting(item) {
-    if (!canEdit(profile?.role)) return;
-    if (!item.client.trim()) return;
-    await commitMutation(
-      (current) => ({ ...current, meetings: [...current.meetings, { ...item, id: makeId("meeting") }] }),
-      { notifyText: "Meeting yozuvi qo'shildi", auditText: `Meeting saqlandi: ${item.client}`, page: "meetings" }
-    );
+    if (!canEdit(profile?.role) || !item.client.trim()) return;
+    const meeting = { ...item, id: makeId("meeting"), createdAt: isoNow(), updatedAt: isoNow(), createdBy: profile.uid, updatedBy: profile.uid };
+    const metaDocs = createMetaDocs({ notifyText: "Meeting yozuvi qo'shildi", auditText: `Meeting saqlandi: ${item.client}`, page: "meetings" }, profile);
+    startTransition(() => {
+      setMeetingDocs((current) => [meeting, ...current]);
+      applyOptimisticMetaDocs(metaDocs);
+    });
+    setSyncing(true);
+    try {
+      await commitBatchOperations(db, [
+        { type: "set", ref: doc(db, "meetings", meeting.id), data: meeting, options: { merge: false } },
+        ...metaDocs.map((entry) => ({ type: "set", ref: doc(db, entry.collection, entry.id), data: entry.data, options: { merge: false } })),
+      ]);
+      pushToast("Meeting yozuvi qo'shildi");
+    } catch (error) {
+      setAuthError(humanizeAuthError(error));
+      pushToast(humanizeAuthError(error), "error");
+    } finally {
+      setSyncing(false);
+    }
   }
 
   async function deleteMeeting(id) {
-    if (!canEdit(profile?.role)) return;
-    if (!window.confirm("Meeting yozuvi o'chirilsinmi?")) return;
-    await commitMutation(
-      (current) => ({ ...current, meetings: current.meetings.filter((meeting) => meeting.id !== id) }),
-      { notifyText: "Meeting yozuvi o'chirildi", auditText: "Meeting yozuvi o'chirildi", page: "meetings" }
-    );
+    if (!canEdit(profile?.role) || !window.confirm("Meeting yozuvi o'chirilsinmi?")) return;
+    const metaDocs = createMetaDocs({ notifyText: "Meeting yozuvi o'chirildi", auditText: "Meeting yozuvi o'chirildi", page: "meetings" }, profile);
+    startTransition(() => {
+      setMeetingDocs((current) => current.filter((meeting) => meeting.id !== id));
+      applyOptimisticMetaDocs(metaDocs);
+    });
+    setSyncing(true);
+    try {
+      await commitBatchOperations(db, [
+        { type: "delete", ref: doc(db, "meetings", id) },
+        ...metaDocs.map((entry) => ({ type: "set", ref: doc(db, entry.collection, entry.id), data: entry.data, options: { merge: false } })),
+      ]);
+      pushToast("Meeting yozuvi o'chirildi");
+    } catch (error) {
+      setAuthError(humanizeAuthError(error));
+      pushToast(humanizeAuthError(error), "error");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function loadOlderMessages() {
+    if (!chatCollectionRef || !chatCursor || chatLoadingOlder) return;
+    setChatLoadingOlder(true);
+    try {
+      const snapshot = await getDocs(query(chatCollectionRef, orderBy("createdAt", "desc"), startAfter(chatCursor), limit(40)));
+      const olderMessages = snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())).reverse();
+      startTransition(() => {
+        setChatMessages((current) => {
+          const merged = [...olderMessages, ...current];
+          return Object.values(indexById(merged)).sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+        });
+        if (olderMessages.length) {
+          setChatCursor(olderMessages[0].createdAt || chatCursor);
+        }
+        setChatHasMore(snapshot.size === 40);
+      });
+    } catch (error) {
+      setAuthError(humanizeAuthError(error));
+    } finally {
+      setChatLoadingOlder(false);
+    }
   }
 
   async function sendChatMessage(text) {
@@ -3578,19 +4514,20 @@ export default function App() {
       createdAt: isoNow(),
       editedAt: null,
       readBy: { [profile.uid]: true },
+      status: "sending",
     };
     startTransition(() => {
       setChatMessages((current) =>
-        [...current, message]
-          .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")))
-          .slice(-120)
+        Object.values(indexById([...current, message])).sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")))
       );
     });
     try {
-      await setDoc(doc(chatCollectionRef, message.id), message, { merge: false });
+      await setDoc(doc(db, "chatMessages", message.id), { ...message, status: "sent" }, { merge: false });
     } catch (error) {
       startTransition(() => {
-        setChatMessages((current) => current.filter((item) => item.id !== message.id));
+        setChatMessages((current) =>
+          current.map((item) => (item.id === message.id ? { ...item, status: "failed" } : item))
+        );
       });
       setAuthError(humanizeAuthError(error));
       pushToast(humanizeAuthError(error), "error");
@@ -3606,7 +4543,7 @@ export default function App() {
       );
     });
     try {
-      await setDoc(doc(chatCollectionRef, messageId), { text, editedAt: nextEditedAt }, { merge: true });
+      await setDoc(doc(db, "chatMessages", messageId), { text, editedAt: nextEditedAt, status: "sent" }, { merge: true });
     } catch (error) {
       setAuthError(humanizeAuthError(error));
       pushToast(humanizeAuthError(error), "error");
@@ -3627,11 +4564,15 @@ export default function App() {
       );
     });
     try {
-      const batch = writeBatch(db);
-      unread.forEach((message) => {
-        batch.set(doc(chatCollectionRef, message.id), { readBy: { ...(message.readBy || {}), [profile.uid]: true } }, { merge: true });
-      });
-      await batch.commit();
+      await commitBatchOperations(
+        db,
+        unread.map((message) => ({
+          type: "set",
+          ref: doc(db, "chatMessages", message.id),
+          data: { readBy: { ...(message.readBy || {}), [profile.uid]: true } },
+          options: { merge: true },
+        }))
+      );
     } catch (error) {
       setAuthError(humanizeAuthError(error));
     }
@@ -3683,15 +4624,21 @@ export default function App() {
               progressByProjectId={projectCaches.progressByProjectId}
               dashboardSummary={projectCaches.dashboardSummary}
               loading={!crmReady}
-              onOpenProject={(id) => { setSelectedProjectId(id); setPage("projects"); }}
+              onOpenProject={(id) => {
+                setSelectedProjectId(id);
+                setPage("projects");
+              }}
             />
           ) : null}
+
           {page === "projects" ? (
             <ProjectsPage
               profile={profile}
               projects={projects}
               employees={employees}
               selectedProjectId={selectedProjectId}
+              selectedProject={selectedProject}
+              projectReady={projectWorkspaceReady}
               onSelectProject={setSelectedProjectId}
               onBackToList={() => setSelectedProjectId("")}
               onCreateProject={createProject}
@@ -3701,6 +4648,7 @@ export default function App() {
               progressByProjectId={projectCaches.progressByProjectId}
             />
           ) : null}
+
           {page === "team" ? (
             <TeamPage
               profile={profile}
@@ -3714,11 +4662,12 @@ export default function App() {
               loading={!crmReady}
             />
           ) : null}
+
           {page === "shooting" ? <ShootingPage profile={profile} shoots={shoots} projects={projects} employees={employees} onSaveShoot={saveShoot} onDeleteShoot={deleteShoot} /> : null}
-          {page === "meetings" ? <MeetingsPage profile={profile} meetings={crm.meetings} employees={employees} onAddMeeting={addMeeting} onDeleteMeeting={deleteMeeting} /> : null}
-          {page === "chat" ? <ChatPage profile={profile} employees={employees} messages={chatMessages} onSendMessage={sendChatMessage} onEditMessage={editChatMessage} onMarkRead={markChatMessagesRead} loading={!chatReady} /> : null}
-          {page === "notifications" ? <NotificationsPage notifications={crm.notifications} profile={profile} onMarkAllRead={markAllNotificationsRead} /> : null}
-          {page === "reports" && canViewReports(profile.role) ? <ReportsPage projects={crm.projects} /> : null}
+          {page === "meetings" ? <MeetingsPage profile={profile} meetings={meetingDocs} employees={employees} onAddMeeting={addMeeting} onDeleteMeeting={deleteMeeting} /> : null}
+          {page === "chat" ? <ChatPage profile={profile} employees={employees} messages={chatMessages} onSendMessage={sendChatMessage} onEditMessage={editChatMessage} onMarkRead={markChatMessagesRead} onLoadOlder={loadOlderMessages} hasMore={chatHasMore} loadingOlder={chatLoadingOlder} loading={!chatReady} /> : null}
+          {page === "notifications" ? <NotificationsPage notifications={notificationDocs} profile={profile} onMarkAllRead={markAllNotificationsRead} /> : null}
+          {page === "reports" && canViewReports(profile.role) ? <ReportsPage projects={projects} /> : null}
           {page === "workflow" ? <WorkflowPage /> : null}
         </main>
         <ToastStack toasts={toasts} />
