@@ -4119,7 +4119,9 @@ function AppShell() {
 
   useEffect(() => {
     if (!profile) return undefined;
-    if (crmReady && chatReady) return undefined;
+    const currentUsersReady = publicUsersReady && (!canManagePeople(profile.role) || privateUsersReady);
+    const currentCrmReady = projectsReady && currentUsersReady;
+    if (currentCrmReady && chatReady) return undefined;
     const timeout = setTimeout(() => {
       setProjectsReady(true);
       setPublicUsersReady(true);
@@ -4128,7 +4130,7 @@ function AppShell() {
       setProjectWorkspaceReady((current) => current || !selectedProjectId);
     }, 3500);
     return () => clearTimeout(timeout);
-  }, [profile?.uid, profile?.role, crmReady, chatReady, selectedProjectId]);
+  }, [profile?.uid, profile?.role, projectsReady, publicUsersReady, privateUsersReady, chatReady, selectedProjectId]);
 
   useEffect(() => {
     if (!profile) return;
