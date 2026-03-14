@@ -1027,6 +1027,8 @@ function humanizeAuthError(error) {
     "auth/popup-blocked": "Brauzer Google oynasini blokladi.",
     "auth/account-exists-with-different-credential": "Bu email boshqa usul bilan ro'yxatdan o'tgan.",
     "permission-denied": "Firestore ruxsatlari yetarli emas. Firebase Console ichida Firestore Rules ni tekshiring.",
+    unavailable: "Firestore yoki internet bilan aloqa uzildi. Brauzer tarmoqni bloklamayotganini tekshiring.",
+    "resource-exhausted": "Firestore limitiga urildi yoki juda ko'p yozish so'rovi yuborildi.",
   };
   return map[code] || `Firebase xatosi: ${code || error?.message || "noma'lum xato"}`;
 }
@@ -3790,13 +3792,20 @@ export default function App() {
         setProjectsReady(true);
       });
     }
-    const unsubscribe = onSnapshot(projectsCollectionRef, (snapshot) => {
-      const nextProjects = sortByRecent(snapshot.docs.map((entry) => normalizeStoredProjectMeta(entry.id, entry.data())), "updatedAt").filter((project) => !project.archived);
-      startTransition(() => {
-        setProjectDocs(nextProjects);
+    const unsubscribe = onSnapshot(
+      projectsCollectionRef,
+      (snapshot) => {
+        const nextProjects = sortByRecent(snapshot.docs.map((entry) => normalizeStoredProjectMeta(entry.id, entry.data())), "updatedAt").filter((project) => !project.archived);
+        startTransition(() => {
+          setProjectDocs(nextProjects);
+          setProjectsReady(true);
+        });
+      },
+      (error) => {
+        setAuthError(humanizeAuthError(error));
         setProjectsReady(true);
-      });
-    });
+      }
+    );
     return () => unsubscribe();
   }, [profile?.uid, projectsCollectionRef]);
 
@@ -3810,14 +3819,21 @@ export default function App() {
         setPublicUsersReady(true);
       });
     }
-    const unsubscribe = onSnapshot(usersCollectionRef, (snapshot) => {
-      const nextUsers = snapshot.docs.map((entry) => normalizeStoredUser(entry.id, entry.data()));
-      nextUsers.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
-      startTransition(() => {
-        setPublicUsers(nextUsers);
+    const unsubscribe = onSnapshot(
+      usersCollectionRef,
+      (snapshot) => {
+        const nextUsers = snapshot.docs.map((entry) => normalizeStoredUser(entry.id, entry.data()));
+        nextUsers.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+        startTransition(() => {
+          setPublicUsers(nextUsers);
+          setPublicUsersReady(true);
+        });
+      },
+      (error) => {
+        setAuthError(humanizeAuthError(error));
         setPublicUsersReady(true);
-      });
-    });
+      }
+    );
     return () => unsubscribe();
   }, [profile?.uid, usersCollectionRef]);
 
@@ -3837,16 +3853,23 @@ export default function App() {
         setPrivateUsersReady(true);
       });
     }
-    const unsubscribe = onSnapshot(userPrivateCollectionRef, (snapshot) => {
-      const nextPrivateUsers = {};
-      snapshot.docs.forEach((entry) => {
-        nextPrivateUsers[entry.id] = normalizeStoredPrivateUser(entry.id, entry.data());
-      });
-      startTransition(() => {
-        setPrivateUsers(nextPrivateUsers);
+    const unsubscribe = onSnapshot(
+      userPrivateCollectionRef,
+      (snapshot) => {
+        const nextPrivateUsers = {};
+        snapshot.docs.forEach((entry) => {
+          nextPrivateUsers[entry.id] = normalizeStoredPrivateUser(entry.id, entry.data());
+        });
+        startTransition(() => {
+          setPrivateUsers(nextPrivateUsers);
+          setPrivateUsersReady(true);
+        });
+      },
+      (error) => {
+        setAuthError(humanizeAuthError(error));
         setPrivateUsersReady(true);
-      });
-    });
+      }
+    );
     return () => unsubscribe();
   }, [profile?.uid, userPrivateCollectionRef, profile?.role]);
 
@@ -3858,10 +3881,16 @@ export default function App() {
         setShootDocs(cachedShoots.map((item) => normalizeStoredRecord(item.id, item)));
       });
     }
-    const unsubscribe = onSnapshot(shootsCollectionRef, (snapshot) => {
-      const nextShoots = snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
-      startTransition(() => setShootDocs(nextShoots));
-    });
+    const unsubscribe = onSnapshot(
+      shootsCollectionRef,
+      (snapshot) => {
+        const nextShoots = snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
+        startTransition(() => setShootDocs(nextShoots));
+      },
+      (error) => {
+        setAuthError(humanizeAuthError(error));
+      }
+    );
     return () => unsubscribe();
   }, [profile?.uid, shootsCollectionRef]);
 
@@ -3873,10 +3902,16 @@ export default function App() {
         setMeetingDocs(cachedMeetings.map((item) => normalizeStoredRecord(item.id, item)));
       });
     }
-    const unsubscribe = onSnapshot(meetingsCollectionRef, (snapshot) => {
-      const nextMeetings = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "date");
-      startTransition(() => setMeetingDocs(nextMeetings));
-    });
+    const unsubscribe = onSnapshot(
+      meetingsCollectionRef,
+      (snapshot) => {
+        const nextMeetings = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "date");
+        startTransition(() => setMeetingDocs(nextMeetings));
+      },
+      (error) => {
+        setAuthError(humanizeAuthError(error));
+      }
+    );
     return () => unsubscribe();
   }, [profile?.uid, meetingsCollectionRef]);
 
@@ -3888,10 +3923,16 @@ export default function App() {
         setNotificationDocs(cachedNotifications.map((item) => normalizeStoredRecord(item.id, item)));
       });
     }
-    const unsubscribe = onSnapshot(notificationsCollectionRef, (snapshot) => {
-      const nextNotifications = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "createdAt").slice(0, 120);
-      startTransition(() => setNotificationDocs(nextNotifications));
-    });
+    const unsubscribe = onSnapshot(
+      notificationsCollectionRef,
+      (snapshot) => {
+        const nextNotifications = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "createdAt").slice(0, 120);
+        startTransition(() => setNotificationDocs(nextNotifications));
+      },
+      (error) => {
+        setAuthError(humanizeAuthError(error));
+      }
+    );
     return () => unsubscribe();
   }, [profile?.uid, notificationsCollectionRef]);
 
@@ -3903,10 +3944,16 @@ export default function App() {
         setAuditDocs(cachedAudit.map((item) => normalizeStoredRecord(item.id, item)));
       });
     }
-    const unsubscribe = onSnapshot(auditLogsCollectionRef, (snapshot) => {
-      const nextAuditDocs = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "createdAt").slice(0, 180);
-      startTransition(() => setAuditDocs(nextAuditDocs));
-    });
+    const unsubscribe = onSnapshot(
+      auditLogsCollectionRef,
+      (snapshot) => {
+        const nextAuditDocs = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "createdAt").slice(0, 180);
+        startTransition(() => setAuditDocs(nextAuditDocs));
+      },
+      (error) => {
+        setAuthError(humanizeAuthError(error));
+      }
+    );
     return () => unsubscribe();
   }, [profile?.uid, auditLogsCollectionRef]);
 
@@ -3996,26 +4043,46 @@ export default function App() {
         setChatReady(true);
       });
     }
-    const unsubscribe = onSnapshot(query(chatCollectionRef, orderBy("createdAt"), limitToLast(60)), (snapshot) => {
-      const liveMessages = snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
-      const oldestLiveCreatedAt = liveMessages[0]?.createdAt || "";
-      startTransition(() => {
-        setChatMessages((current) => {
-          const olderMessages = current.filter((message) => oldestLiveCreatedAt && String(message.createdAt || "") < String(oldestLiveCreatedAt));
-          const merged = [...olderMessages, ...liveMessages];
-          const deduped = Object.values(indexById(merged)).sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
-          return deduped;
+    const unsubscribe = onSnapshot(
+      query(chatCollectionRef, orderBy("createdAt"), limitToLast(60)),
+      (snapshot) => {
+        const liveMessages = snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
+        const oldestLiveCreatedAt = liveMessages[0]?.createdAt || "";
+        startTransition(() => {
+          setChatMessages((current) => {
+            const olderMessages = current.filter((message) => oldestLiveCreatedAt && String(message.createdAt || "") < String(oldestLiveCreatedAt));
+            const merged = [...olderMessages, ...liveMessages];
+            const deduped = Object.values(indexById(merged)).sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+            return deduped;
+          });
+          setChatCursor((current) => {
+            if (current && oldestLiveCreatedAt) return String(current) < String(oldestLiveCreatedAt) ? current : oldestLiveCreatedAt;
+            return current || oldestLiveCreatedAt;
+          });
+          setChatHasMore(liveMessages.length >= 60 || Boolean(chatCursor));
+          setChatReady(true);
         });
-        setChatCursor((current) => {
-          if (current && oldestLiveCreatedAt) return String(current) < String(oldestLiveCreatedAt) ? current : oldestLiveCreatedAt;
-          return current || oldestLiveCreatedAt;
-        });
-        setChatHasMore(liveMessages.length >= 60 || Boolean(chatCursor));
+      },
+      (error) => {
+        setAuthError(humanizeAuthError(error));
         setChatReady(true);
-      });
-    });
+      }
+    );
     return () => unsubscribe();
   }, [profile?.uid, chatCollectionRef]);
+
+  useEffect(() => {
+    if (!profile) return undefined;
+    if (crmReady && chatReady) return undefined;
+    const timeout = setTimeout(() => {
+      setProjectsReady(true);
+      setPublicUsersReady(true);
+      if (canManagePeople(profile.role)) setPrivateUsersReady(true);
+      setChatReady(true);
+      setProjectWorkspaceReady((current) => current || !selectedProjectId);
+    }, 3500);
+    return () => clearTimeout(timeout);
+  }, [profile?.uid, profile?.role, crmReady, chatReady, selectedProjectId]);
 
   useEffect(() => {
     if (!profile) return;
@@ -4636,6 +4703,11 @@ export default function App() {
         <Sidebar profile={profile} page={page} onNavigate={navigate} onLogout={handleLogout} unreadCount={unreadCount} />
 
         <main style={{ flex: 1, overflow: "auto", padding: "32px 36px", maxWidth: "calc(100% - 220px)" }}>
+          {authError ? (
+            <div style={{ marginBottom: 14, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", padding: "12px 14px", borderRadius: T.radius.lg, fontSize: 13, fontWeight: 600 }}>
+              {authError}
+            </div>
+          ) : null}
           {syncing ? (
             <div style={{ marginBottom: 14, display: "inline-flex", alignItems: "center", gap: 8, background: T.colors.accentSoft, color: T.colors.accent, padding: "6px 10px", borderRadius: T.radius.full, fontSize: 12, fontWeight: 700 }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: T.colors.accent, animation: "syncPulse 1s ease-in-out infinite" }} />
