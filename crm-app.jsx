@@ -1878,7 +1878,7 @@ function MotivationGauge({ score }) {
   );
 }
 
-function DashboardPage({ profile, projects, employees, employeeMetricsById, progressByProjectId, dashboardSummary, loading, onOpenProject }) {
+const DashboardPage = memo(function DashboardPage({ profile, projects, employees, employeeMetricsById, progressByProjectId, dashboardSummary, loading, onOpenProject }) {
   const score = healthScore(projects);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
 
@@ -2006,7 +2006,7 @@ function DashboardPage({ profile, projects, employees, employeeMetricsById, prog
       ) : null}
     </div>
   );
-}
+});
 
 function ProjectFormModal({ employees, initialValue, onClose, onSubmit }) {
   const [form, setForm] = useState(
@@ -2089,7 +2089,7 @@ function ReportEditor({ project, editable, onChange }) {
   );
 }
 
-function TasksTab({ profile, project, employees, editable, onUpdateProject }) {
+const TasksTab = memo(function TasksTab({ profile, project, employees, editable, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
   const assignableEmployees = projectMembers(project, employees);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
@@ -2200,9 +2200,9 @@ function TasksTab({ profile, project, employees, editable, onUpdateProject }) {
       )}
     </Card>
   );
-}
+});
 
-function ContentPlanTab({ profile, project, employees, editable, onUpdateProject }) {
+const ContentPlanTab = memo(function ContentPlanTab({ profile, project, employees, editable, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
   const assignableEmployees = projectMembers(project, employees);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
@@ -2311,9 +2311,9 @@ function ContentPlanTab({ profile, project, employees, editable, onUpdateProject
       )}
     </Card>
   );
-}
+});
 
-function MediaPlanTab({ profile, project, employees, editable, onUpdateProject }) {
+const MediaPlanTab = memo(function MediaPlanTab({ profile, project, employees, editable, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
   const assignableEmployees = projectMembers(project, employees);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
@@ -2421,9 +2421,9 @@ function MediaPlanTab({ profile, project, employees, editable, onUpdateProject }
       )}
     </Card>
   );
-}
+});
 
-function PlansTab({ profile, project, editable, onUpdateProject }) {
+const PlansTab = memo(function PlansTab({ profile, project, editable, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
   const [planType, setPlanType] = useState("daily");
   const [draft, setDraft] = useState({ title: "", status: "Rejalashtirildi", taskId: "", note: "", date: "", week: "", month: "", comments: [] });
@@ -2545,9 +2545,9 @@ function PlansTab({ profile, project, editable, onUpdateProject }) {
       )}
     </Card>
   );
-}
+});
 
-function CallsTab({ profile, project, employees, editable, onUpdateProject }) {
+const CallsTab = memo(function CallsTab({ profile, project, employees, editable, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
   const assignableEmployees = projectMembers(project, employees);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
@@ -2651,9 +2651,9 @@ function CallsTab({ profile, project, employees, editable, onUpdateProject }) {
       )}
     </Card>
   );
-}
+});
 
-function ProjectDetailPage({ profile, project, employees, onBack, onSaveProject, onDeleteProject }) {
+const ProjectDetailPage = memo(function ProjectDetailPage({ profile, project, employees, onBack, onSaveProject, onDeleteProject }) {
   const [tab, setTab] = useState("tasks");
   const [editingProject, setEditingProject] = useState(false);
   const editable = canManageProjectMeta(profile);
@@ -2778,9 +2778,9 @@ function ProjectDetailPage({ profile, project, employees, onBack, onSaveProject,
       ) : null}
     </div>
   );
-}
+});
 
-function ProjectsPage({ profile, projects, employees, selectedProjectId, selectedProject, projectReady, onSelectProject, onBackToList, onCreateProject, onSaveProject, onDeleteProject, loading, progressByProjectId }) {
+const ProjectsPage = memo(function ProjectsPage({ profile, projects, employees, selectedProjectId, selectedProject, projectReady, onSelectProject, onBackToList, onCreateProject, onSaveProject, onDeleteProject, loading, progressByProjectId }) {
   const [showCreate, setShowCreate] = useState(false);
   const editable = canEdit(profile.role);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
@@ -2889,9 +2889,9 @@ function ProjectsPage({ profile, projects, employees, selectedProjectId, selecte
       ) : null}
     </div>
   );
-}
+});
 
-function TeamPage({ profile, employees, projects, employeeMetricsById, assignmentsByEmployeeId, onSaveEmployee, onCreateEmployee, onDeleteEmployee, loading }) {
+const TeamPage = memo(function TeamPage({ profile, employees, projects, employeeMetricsById, assignmentsByEmployeeId, onSaveEmployee, onCreateEmployee, onDeleteEmployee, loading }) {
   const [editingEmployee, setEditingEmployee] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const editable = canManagePeople(profile.role);
@@ -3011,7 +3011,7 @@ function TeamPage({ profile, employees, projects, employeeMetricsById, assignmen
       ) : null}
     </div>
   );
-}
+});
 
 function EmployeeEditForm({ employee, onCancel, onSave, submitLabel = "Saqlash", showCompensation = true }) {
   const [form, setForm] = useState({ ...employee, salary: String(employee.salary || ""), kpiBase: String(employee.kpiBase || 80), load: String(employee.load || 0), email: employee.email || "" });
@@ -3341,7 +3341,7 @@ function WorkflowPage() {
   );
 }
 
-function ChatPage({ profile, employees, messages, onSendMessage, onEditMessage, onMarkRead, onLoadOlder, hasMore, loadingOlder, loading }) {
+const ChatPage = memo(function ChatPage({ profile, employees, messages, onSendMessage, onEditMessage, onMarkRead, onLoadOlder, hasMore, loadingOlder, loading }) {
   const [input, setInput] = useState("");
   const [editingId, setEditingId] = useState("");
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -3529,7 +3529,7 @@ function ChatPage({ profile, employees, messages, onSendMessage, onEditMessage, 
       </Card>
     </div>
   );
-}
+});
 
 function NotificationsPage({ notifications, profile, onMarkAllRead }) {
   const unread = notifications.filter((item) => !item.readBy?.[profile.uid]);
@@ -3680,8 +3680,12 @@ function AppShell() {
 
   function pushToast(text, tone = "success") {
     if (!text) return;
-    // Don't show permission-denied as toast — it's a config issue
-    if (tone === "error" && String(text).toLowerCase().includes("ruxsat")) return;
+    const msg = String(text).toLowerCase();
+    // Suppress Firestore config/permission errors from toast — show in console only
+    if (tone === "error" && (msg.includes("ruxsat") || msg.includes("permission") || msg.includes("unavailable"))) {
+      console.error("[CRM] suppressed toast:", text);
+      return;
+    }
     setToasts((current) => [...current.slice(-2), { id: makeId("toast"), text, tone }]);
   }
 
@@ -3949,9 +3953,7 @@ function AppShell() {
         const nextShoots = snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
         startTransition(() => setShootDocs(nextShoots));
       },
-      (error) => {
-        setAuthError(humanizeAuthError(error));
-      }
+      (error) => { console.error("[CRM] shoots:", error?.code); }
     );
     return () => unsubscribe();
   }, [profile?.uid, shootsCollectionRef]);
@@ -3970,9 +3972,7 @@ function AppShell() {
         const nextMeetings = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "date");
         startTransition(() => setMeetingDocs(nextMeetings));
       },
-      (error) => {
-        setAuthError(humanizeAuthError(error));
-      }
+      (error) => { console.error("[CRM] meetings:", error?.code); }
     );
     return () => unsubscribe();
   }, [profile?.uid, meetingsCollectionRef]);
@@ -4153,13 +4153,11 @@ function AppShell() {
     return () => unsubscribe();
   }, [profile?.uid, chatCollectionRef]);
 
+  // One-shot 2s safety net per login — forces all skeletons to resolve.
+  // Deps = [profile?.uid] so it runs ONCE per session, not on every state change.
   useEffect(() => {
     if (!profile) return undefined;
-    const currentUsersReady = publicUsersReady && (!canManagePeople(profile.role) || privateUsersReady);
-    const currentCrmReady = projectsReady && currentUsersReady;
-    if (currentCrmReady && chatReady) return undefined;
     const timeout = setTimeout(() => {
-      // Force-resolve all loading states after 2s to prevent infinite skeleton
       setProjectsReady(true);
       setPublicUsersReady(true);
       setPrivateUsersReady(true);
@@ -4167,7 +4165,7 @@ function AppShell() {
       setProjectWorkspaceReady(true);
     }, 2000);
     return () => clearTimeout(timeout);
-  }, [profile?.uid, profile?.role, projectsReady, publicUsersReady, privateUsersReady, chatReady, selectedProjectId]);
+  }, [profile?.uid]);
 
   // Cache write debounced — prevent extra re-renders from rapid state updates
   useEffect(() => {
@@ -4198,11 +4196,17 @@ function AppShell() {
   const crmReady = projectsReady && usersReady;
   const employees = useMemo(() => visibleEmployees(profile, mergeEmployeeDocs(publicUsers, privateUsers, profile?.role, projectDocs), projectDocs), [profile, publicUsers, privateUsers, projectDocs]);
   const projects = useMemo(() => visibleProjects(profile, projectDocs), [profile, projectDocs]);
-  const selectedProject = useMemo(() => {
+  // FIX: Only recalculate selectedProject when THIS project's meta changes,
+  // not when any other project in projectDocs changes.
+  const selectedProjectMeta = useMemo(() => {
     if (!selectedProjectId) return null;
-    const baseProject = projectDocs.find((project) => project.id === selectedProjectId);
-    return baseProject ? hydrateProject(baseProject, selectedProjectWorkspace) : null;
-  }, [selectedProjectId, projectDocs, selectedProjectWorkspace]);
+    return projectDocs.find((p) => p.id === selectedProjectId) || null;
+  }, [selectedProjectId, projectDocs]);
+
+  const selectedProject = useMemo(() => {
+    if (!selectedProjectId || !selectedProjectMeta) return null;
+    return hydrateProject(selectedProjectMeta, selectedProjectWorkspace);
+  }, [selectedProjectId, selectedProjectMeta, selectedProjectWorkspace]);
   const shoots = useMemo(() => visibleShoots(profile, shootDocs, projectDocs), [profile, shootDocs, projectDocs]);
   const projectCaches = useMemo(() => buildProjectCaches(projects), [projects]);
   const unreadCount = useMemo(() => (profile ? unreadNotifications(notificationDocs, profile.uid) : 0), [notificationDocs, profile]);
@@ -4818,7 +4822,7 @@ function AppShell() {
         <Sidebar profile={profile} page={page} onNavigate={navigate} onLogout={handleLogout} unreadCount={unreadCount} />
 
         <main style={{ flex: 1, overflow: "auto", padding: "32px 36px", maxWidth: "calc(100% - 220px)" }}>
-          {authError ? (
+          {authError && !authError.includes("ruxsat") && !authError.includes("permission") ? (
             <div style={{ marginBottom: 14, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", padding: "12px 14px", borderRadius: T.radius.lg, fontSize: 13, fontWeight: 600 }}>
               {authError}
             </div>

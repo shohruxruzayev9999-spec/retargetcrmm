@@ -2,8 +2,6 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 
-ReactDOM.createRoot(document.getElementById("root")).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+// StrictMode removed — it double-invokes every useEffect in dev
+// causing duplicate Firebase listeners, race conditions and flickering.
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
