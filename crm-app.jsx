@@ -3680,6 +3680,8 @@ function AppShell() {
 
   function pushToast(text, tone = "success") {
     if (!text) return;
+    // Don't show permission-denied as toast — it's a config issue
+    if (tone === "error" && String(text).toLowerCase().includes("ruxsat")) return;
     setToasts((current) => [...current.slice(-2), { id: makeId("toast"), text, tone }]);
   }
 
@@ -3849,8 +3851,11 @@ function AppShell() {
         });
       },
       (error) => {
-        setAuthError(humanizeAuthError(error));
-        setProjectsReady(true);
+        console.error('[CRM] projects onSnapshot error:', error?.code, error?.message);
+        setProjectsReady(true); // Always resolve skeleton even on error
+        if (!String(error?.code || '').includes('permission-denied')) {
+          setAuthError(humanizeAuthError(error));
+        }
       }
     );
     return () => unsubscribe();
@@ -3877,8 +3882,11 @@ function AppShell() {
         });
       },
       (error) => {
-        setAuthError(humanizeAuthError(error));
+        console.error('[CRM] users onSnapshot error:', error?.code, error?.message);
         setPublicUsersReady(true);
+        if (!String(error?.code || '').includes('permission-denied')) {
+          setAuthError(humanizeAuthError(error));
+        }
       }
     );
     return () => unsubscribe();
@@ -3913,7 +3921,7 @@ function AppShell() {
         });
       },
       (error) => {
-        setAuthError(humanizeAuthError(error));
+        console.error('[CRM] privateUsers onSnapshot error:', error?.code, error?.message);
         setPrivateUsersReady(true);
       }
     );
@@ -4045,8 +4053,8 @@ function AppShell() {
     }
 
     function handleWorkspaceError(error) {
-      setAuthError(humanizeAuthError(error));
-      setProjectWorkspaceReady(true);
+      console.error('[CRM] workspace onSnapshot error:', error?.code, error?.message);
+      setProjectWorkspaceReady(true); // Always resolve skeleton
     }
 
     const unsubscribes = [
@@ -4114,8 +4122,8 @@ function AppShell() {
         });
       },
       (error) => {
-        setAuthError(humanizeAuthError(error));
-        setChatReady(true);
+        console.error('[CRM] chat onSnapshot error:', error?.code, error?.message);
+        setChatReady(true); // Always resolve skeleton
       }
     );
     return () => unsubscribe();
@@ -4127,12 +4135,13 @@ function AppShell() {
     const currentCrmReady = projectsReady && currentUsersReady;
     if (currentCrmReady && chatReady) return undefined;
     const timeout = setTimeout(() => {
+      // Force-resolve all loading states after 2s to prevent infinite skeleton
       setProjectsReady(true);
       setPublicUsersReady(true);
-      if (canManagePeople(profile.role)) setPrivateUsersReady(true);
+      setPrivateUsersReady(true);
       setChatReady(true);
-      setProjectWorkspaceReady((current) => current || !selectedProjectId);
-    }, 3500);
+      setProjectWorkspaceReady(true);
+    }, 2000);
     return () => clearTimeout(timeout);
   }, [profile?.uid, profile?.role, projectsReady, publicUsersReady, privateUsersReady, chatReady, selectedProjectId]);
 

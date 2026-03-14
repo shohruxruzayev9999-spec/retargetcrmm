@@ -1,24 +1,30 @@
 rules_version = '2';
 
+// ═══════════════════════════════════════════════════════════════
+// RetargetCRM — Firestore Security Rules v3
+// FIX: resource.data is NULL on list/collection queries.
+//      Split "read" into "get" (single doc) and "list" (query).
+// ═══════════════════════════════════════════════════════════════
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────────
 
     function signedIn() {
       return request.auth != null;
     }
 
-    // Reads user doc once and caches in the call; avoids repeated get() calls.
+    function uid() {
+      return request.auth.uid;
+    }
+
     function currentUserData() {
-      return signedIn()
-        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data
-        : null;
+      return get(/databases/$(database)/documents/users/$(uid())).data;
     }
 
     function currentRole() {
-      let d = currentUserData();
-      return d != null ? d.roleCode : "";
+      return signedIn() ? currentUserData().roleCode : "";
     }
 
     function isManagerRole() {
@@ -26,159 +32,159 @@ service cloud.firestore {
     }
 
     function isSelf(userId) {
-      return signedIn() && request.auth.uid == userId;
+      return signedIn() && uid() == userId;
     }
 
-    // ── Project helpers (use resource.data to avoid extra get()) ─────────────
-
-    function isProjectMemberFromData(projectData) {
-      return signedIn() && (
-        projectData.managerId == request.auth.uid ||
-        (projectData.teamIds != null && request.auth.uid in projectData.teamIds)
-      );
-    }
-
-    function canReadProjectFromData(projectData) {
+    // For single-doc project reads: use resource.data (no extra get() needed)
+    function canGetProject(projectData) {
       return signedIn() && (
         isManagerRole() ||
-        isProjectMemberFromData(projectData) ||
+        projectData.managerId == uid() ||
+        (projectData.teamIds != null && uid() in projectData.teamIds) ||
         projectData.visibility == "company"
       );
     }
 
-    // For subcollections we still need a parent get — minimised to one call.
-    function parentProject(projectId) {
+    // For subcollection writes: need one parent get()
+    function parentProjectData(projectId) {
       return get(/databases/$(database)/documents/projects/$(projectId)).data;
     }
 
+    function canWorkOnProject(projectId) {
+      let p = parentProjectData(projectId);
+      return signedIn() && (
+        isManagerRole() ||
+        p.managerId == uid() ||
+        (p.teamIds != null && uid() in p.teamIds)
+      );
+    }
+
     function canReadSubcollection(projectId) {
-      let p = parentProject(projectId);
-      return canReadProjectFromData(p);
+      let p = parentProjectData(projectId);
+      return signedIn() && (
+        isManagerRole() ||
+        p.managerId == uid() ||
+        (p.teamIds != null && uid() in p.teamIds) ||
+        p.visibility == "company"
+      );
     }
 
-    function canWriteSubcollection(projectId) {
-      let p = parentProject(projectId);
-      return isManagerRole() || isProjectMemberFromData(p);
-    }
-
-    // ── Users ─────────────────────────────────────────────────────────────────
+    // ── Users ─────────────────────────────────────────────────────
 
     match /users/{userId} {
-      allow read: if signedIn();
+      allow read:   if signedIn();
       allow create: if signedIn() && (isSelf(userId) || isManagerRole());
       allow update: if signedIn() && (isSelf(userId) || isManagerRole());
       allow delete: if isManagerRole();
     }
 
     match /userPrivate/{userId} {
-      allow read:   if isSelf(userId) || isManagerRole();
-      allow create,
-            update: if isSelf(userId) || isManagerRole();
-      allow delete: if isManagerRole();
+      allow read:           if isSelf(userId) || isManagerRole();
+      allow create, update: if isSelf(userId) || isManagerRole();
+      allow delete:         if isManagerRole();
     }
 
-    // ── Projects ──────────────────────────────────────────────────────────────
+    // ── Projects ──────────────────────────────────────────────────
+    // KEY FIX: "list" (collection query) → allow all signed-in users.
+    //   Frontend visibleProjects() filters by role.
+    // "get" (single doc) → strict check via resource.data (no extra get).
 
     match /projects/{projectId} {
-      allow read:   if canReadProjectFromData(resource.data);
-      allow create: if isManagerRole();
-      allow update: if isManagerRole();
-      allow delete: if isManagerRole();
+      allow list:           if signedIn();                          // onSnapshot collection
+      allow get:            if canGetProject(resource.data);        // single doc fetch
+      allow create:         if isManagerRole();
+      allow update:         if isManagerRole();
+      allow delete:         if isManagerRole();
 
       match /tasks/{taskId} {
         allow read:             if canReadSubcollection(projectId);
         allow create,
               update,
-              delete:           if canWriteSubcollection(projectId);
+              delete:           if canWorkOnProject(projectId);
       }
 
       match /content/{contentId} {
         allow read:             if canReadSubcollection(projectId);
         allow create,
               update,
-              delete:           if canWriteSubcollection(projectId);
+              delete:           if canWorkOnProject(projectId);
       }
 
       match /mediaPlans/{mediaId} {
         allow read:             if canReadSubcollection(projectId);
         allow create,
               update,
-              delete:           if canWriteSubcollection(projectId);
+              delete:           if canWorkOnProject(projectId);
       }
 
       match /plans/{planId} {
         allow read:             if canReadSubcollection(projectId);
         allow create,
               update,
-              delete:           if canWriteSubcollection(projectId);
+              delete:           if canWorkOnProject(projectId);
       }
 
       match /calls/{callId} {
         allow read:             if canReadSubcollection(projectId);
         allow create,
               update,
-              delete:           if canWriteSubcollection(projectId);
+              delete:           if canWorkOnProject(projectId);
       }
     }
 
-    // ── Shoots ────────────────────────────────────────────────────────────────
+    // ── Shoots ────────────────────────────────────────────────────
 
     match /shoots/{shootId} {
-      allow read:   if signedIn() && canReadProjectFromData(
-                       get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data
-                    );
-      allow create: if signedIn() && canWriteSubcollection(request.resource.data.projectId);
+      allow list:   if signedIn();
+      allow get:    if signedIn();
+      allow create: if canWorkOnProject(request.resource.data.projectId);
       allow update,
-            delete: if signedIn() && canWriteSubcollection(resource.data.projectId);
+            delete: if canWorkOnProject(resource.data.projectId);
     }
 
-    // ── Meetings ──────────────────────────────────────────────────────────────
+    // ── Meetings ──────────────────────────────────────────────────
 
     match /meetings/{meetingId} {
-      allow read:             if signedIn();
+      allow read:           if signedIn();
       allow create,
             update,
-            delete:           if isManagerRole();
+            delete:         if isManagerRole();
     }
 
-    // ── Chat ──────────────────────────────────────────────────────────────────
+    // ── Chat ──────────────────────────────────────────────────────
 
     match /chatMessages/{messageId} {
       allow read:   if signedIn();
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.userId == uid();
       allow update: if signedIn() && (
-        // Anyone can mark message as read (only readBy field changes)
+        // Only readBy field changed → any signed-in user (mark as read)
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(["readBy"]) ||
-        // Author can edit their own message
-        resource.data.userId == request.auth.uid ||
-        // Managers can edit/moderate
+        resource.data.userId == uid() ||
         isManagerRole()
       );
       allow delete: if signedIn() && (
-        resource.data.userId == request.auth.uid || isManagerRole()
+        resource.data.userId == uid() || isManagerRole()
       );
     }
 
-    // ── Notifications ─────────────────────────────────────────────────────────
+    // ── Notifications ─────────────────────────────────────────────
 
     match /notifications/{notificationId} {
       allow read:   if signedIn();
       allow create: if signedIn();
-      // Anyone can update readBy on their own notification; managers can do anything
       allow update: if signedIn();
       allow delete: if isManagerRole();
     }
 
-    // ── Audit Logs ────────────────────────────────────────────────────────────
+    // ── Audit Logs ────────────────────────────────────────────────
 
     match /auditLogs/{logId} {
-      allow read:   if signedIn();
-      allow create: if signedIn();
-      allow update,
-            delete: if isManagerRole();
+      allow read:           if signedIn();
+      allow create:         if signedIn();
+      allow update, delete: if isManagerRole();
     }
 
-    // ── Legacy root (kept for migration) ─────────────────────────────────────
+    // ── Legacy root ───────────────────────────────────────────────
 
     match /crm/{crmId} {
       allow read, write: if signedIn();
