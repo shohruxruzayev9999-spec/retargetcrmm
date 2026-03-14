@@ -4081,10 +4081,15 @@ export default function App() {
   async function syncAssignedProjectIds(ops, nextProjects, affectedUserIds) {
     const assignmentMap = buildAssignedProjectIdsMap(nextProjects);
     affectedUserIds.forEach((userId) => {
+      const currentAssigned = Array.isArray(publicUsersRef.current.find((item) => item.id === userId)?.assignedProjectIds)
+        ? publicUsersRef.current.find((item) => item.id === userId).assignedProjectIds
+        : [];
+      const nextAssigned = assignmentMap[userId] || [];
+      if (recordsEqual(currentAssigned, nextAssigned)) return;
       ops.push({
         type: "set",
         ref: doc(db, "users", userId),
-        data: { assignedProjectIds: assignmentMap[userId] || [], updatedAt: isoNow() },
+        data: { assignedProjectIds: nextAssigned, updatedAt: isoNow() },
         options: { merge: true },
       });
     });

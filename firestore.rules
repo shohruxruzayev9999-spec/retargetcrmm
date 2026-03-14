@@ -10,12 +10,8 @@ service cloud.firestore {
       return /databases/$(database)/documents/users/$(request.auth.uid);
     }
 
-    function hasUserProfile() {
-      return signedIn() && exists(currentUserPath());
-    }
-
     function currentUserData() {
-      return hasUserProfile() ? get(currentUserPath()).data : null;
+      return signedIn() ? get(currentUserPath()).data : null;
     }
 
     function currentRole() {
@@ -34,17 +30,12 @@ service cloud.firestore {
       return /databases/$(database)/documents/projects/$(projectId);
     }
 
-    function hasProject(projectId) {
-      return exists(projectPath(projectId));
-    }
-
     function projectData(projectId) {
-      return hasProject(projectId) ? get(projectPath(projectId)).data : null;
+      return get(projectPath(projectId)).data;
     }
 
     function isProjectMember(projectId) {
       return signedIn() &&
-        hasProject(projectId) &&
         (
           projectData(projectId).managerId == request.auth.uid ||
           (projectData(projectId).teamIds != null && request.auth.uid in projectData(projectId).teamIds)
@@ -53,7 +44,6 @@ service cloud.firestore {
 
     function canReadProject(projectId) {
       return signedIn() &&
-        hasProject(projectId) &&
         (
           isManagerRole() ||
           isProjectMember(projectId) ||
