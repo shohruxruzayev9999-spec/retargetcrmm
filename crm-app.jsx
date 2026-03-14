@@ -3588,7 +3588,53 @@ function LoadingScreen({ label = "Yuklanmoqda..." }) {
   );
 }
 
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error) {
+    console.error("AgencyCRM runtime error", error);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <>
+        <GlobalStyles />
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: T.colors.bg, padding: 24 }}>
+          <Card style={{ maxWidth: 720, width: "100%" }}>
+            <div style={{ fontSize: 28, fontWeight: 900, marginBottom: 10 }}>CRM yuklanishda xato bo'ldi</div>
+            <div style={{ color: T.colors.textSecondary, marginBottom: 18, lineHeight: 1.6 }}>
+              Endi oq ekran o'rniga aniq xato ko'rsatiladi. Shu matnni yuborsangiz keyingi fixni aniq qilaman.
+            </div>
+            <div style={{ background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", borderRadius: T.radius.lg, padding: 16, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", whiteSpace: "pre-wrap", fontSize: 13 }}>
+              {String(this.state.error?.stack || this.state.error?.message || this.state.error)}
+            </div>
+            <div style={{ marginTop: 16 }}>
+              <Button onClick={() => window.location.reload()}>Sahifani qayta yuklash</Button>
+            </div>
+          </Card>
+        </div>
+      </>
+    );
+  }
+}
+
 export default function App() {
+  return (
+    <AppErrorBoundary>
+      <AppShell />
+    </AppErrorBoundary>
+  );
+}
+
+function AppShell() {
   const [profile, setProfile] = useState(null);
   const [projectDocs, setProjectDocs] = useState([]);
   const [publicUsers, setPublicUsers] = useState([]);
