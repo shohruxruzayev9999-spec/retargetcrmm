@@ -3635,27 +3635,40 @@ export default function App() {
 }
 
 function AppShell() {
+  const cachedCrm = readCache(CRM_CACHE_KEY, {});
+  const cachedChat = readCache(CHAT_CACHE_KEY, []);
+  const initialProjects = Array.isArray(cachedCrm.projects) ? cachedCrm.projects.map((item) => normalizeStoredProjectMeta(item.id, item)).filter((project) => !project.archived) : [];
+  const initialPublicUsers = Array.isArray(cachedCrm.users) ? cachedCrm.users.map((item) => normalizeStoredUser(item.id, item)) : [];
+  const initialPrivateUsers = cachedCrm.userPrivate && typeof cachedCrm.userPrivate === "object"
+    ? Object.fromEntries(Object.entries(cachedCrm.userPrivate).map(([id, item]) => [id, normalizeStoredPrivateUser(id, item)]))
+    : {};
+  const initialShoots = Array.isArray(cachedCrm.shoots) ? cachedCrm.shoots.map((item) => normalizeStoredRecord(item.id, item)) : [];
+  const initialMeetings = Array.isArray(cachedCrm.meetings) ? cachedCrm.meetings.map((item) => normalizeStoredRecord(item.id, item)) : [];
+  const initialNotifications = Array.isArray(cachedCrm.notifications) ? cachedCrm.notifications.map((item) => normalizeStoredRecord(item.id, item)) : [];
+  const initialAuditDocs = Array.isArray(cachedCrm.auditLog) ? cachedCrm.auditLog.map((item) => normalizeStoredRecord(item.id, item)) : [];
+  const initialChatMessages = Array.isArray(cachedChat) ? cachedChat : [];
+
   const [profile, setProfile] = useState(null);
-  const [projectDocs, setProjectDocs] = useState([]);
-  const [publicUsers, setPublicUsers] = useState([]);
-  const [privateUsers, setPrivateUsers] = useState({});
-  const [shootDocs, setShootDocs] = useState([]);
-  const [meetingDocs, setMeetingDocs] = useState([]);
-  const [notificationDocs, setNotificationDocs] = useState([]);
-  const [auditDocs, setAuditDocs] = useState([]);
-  const [chatMessages, setChatMessages] = useState([]);
+  const [projectDocs, setProjectDocs] = useState(initialProjects);
+  const [publicUsers, setPublicUsers] = useState(initialPublicUsers);
+  const [privateUsers, setPrivateUsers] = useState(initialPrivateUsers);
+  const [shootDocs, setShootDocs] = useState(initialShoots);
+  const [meetingDocs, setMeetingDocs] = useState(initialMeetings);
+  const [notificationDocs, setNotificationDocs] = useState(initialNotifications);
+  const [auditDocs, setAuditDocs] = useState(initialAuditDocs);
+  const [chatMessages, setChatMessages] = useState(initialChatMessages);
   const [selectedProjectWorkspace, setSelectedProjectWorkspace] = useState(EMPTY_PROJECT_WORKSPACE);
   const [page, setPage] = useState("dashboard");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [booting, setBooting] = useState(true);
-  const [projectsReady, setProjectsReady] = useState(false);
-  const [publicUsersReady, setPublicUsersReady] = useState(false);
-  const [privateUsersReady, setPrivateUsersReady] = useState(false);
-  const [projectWorkspaceReady, setProjectWorkspaceReady] = useState(false);
-  const [chatReady, setChatReady] = useState(false);
-  const [chatHasMore, setChatHasMore] = useState(false);
+  const [projectsReady, setProjectsReady] = useState(initialProjects.length > 0);
+  const [publicUsersReady, setPublicUsersReady] = useState(initialPublicUsers.length > 0);
+  const [privateUsersReady, setPrivateUsersReady] = useState(Object.keys(initialPrivateUsers).length > 0);
+  const [projectWorkspaceReady, setProjectWorkspaceReady] = useState(true);
+  const [chatReady, setChatReady] = useState(initialChatMessages.length > 0);
+  const [chatHasMore, setChatHasMore] = useState(initialChatMessages.length >= 60);
   const [chatLoadingOlder, setChatLoadingOlder] = useState(false);
-  const [chatCursor, setChatCursor] = useState("");
+  const [chatCursor, setChatCursor] = useState(initialChatMessages[0]?.createdAt || "");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -3666,7 +3679,7 @@ function AppShell() {
   const publicUsersRef = useRef([]);
   const selectedProjectRef = useRef(null);
   const chatCursorRef = useRef("");
-  const initialCacheRef = useRef(readCache(CRM_CACHE_KEY, {}));
+  const initialCacheRef = useRef(cachedCrm);
 
   const legacyRootRef = hasFirebaseConfig && db ? doc(db, "crm", ROOT_DOC_ID) : null;
   const projectsCollectionRef = hasFirebaseConfig && db ? collection(db, "projects") : null;
@@ -3844,14 +3857,7 @@ function AppShell() {
 
   useEffect(() => {
     if (!profile || !projectsCollectionRef) return undefined;
-    setProjectsReady(false);
-    const cachedProjects = Array.isArray(initialCacheRef.current.projects) ? initialCacheRef.current.projects : [];
-    if (cachedProjects.length) {
-      startTransition(() => {
-        setProjectDocs(cachedProjects.map((item) => normalizeStoredProjectMeta(item.id, item)));
-        setProjectsReady(true);
-      });
-    }
+    if (!projectDocs.length) setProjectsReady(false);
     const unsubscribe = onSnapshot(
       projectsCollectionRef,
       (snapshot) => {
@@ -3874,14 +3880,7 @@ function AppShell() {
 
   useEffect(() => {
     if (!profile || !usersCollectionRef) return undefined;
-    setPublicUsersReady(false);
-    const cachedUsers = Array.isArray(initialCacheRef.current.users) ? initialCacheRef.current.users : [];
-    if (cachedUsers.length) {
-      startTransition(() => {
-        setPublicUsers(cachedUsers.map((item) => normalizeStoredUser(item.id, item)));
-        setPublicUsersReady(true);
-      });
-    }
+    if (!publicUsers.length) setPublicUsersReady(false);
     const unsubscribe = onSnapshot(
       usersCollectionRef,
       (snapshot) => {
@@ -3910,15 +3909,7 @@ function AppShell() {
       setPrivateUsersReady(true);
       return undefined;
     }
-    setPrivateUsersReady(false);
-    const cachedPrivateUsers = initialCacheRef.current.userPrivate || {};
-    if (Object.keys(cachedPrivateUsers).length) {
-      startTransition(() => {
-        const next = Object.fromEntries(Object.entries(cachedPrivateUsers).map(([id, item]) => [id, normalizeStoredPrivateUser(id, item)]));
-        setPrivateUsers(next);
-        setPrivateUsersReady(true);
-      });
-    }
+    if (!Object.keys(privateUsers).length) setPrivateUsersReady(false);
     const unsubscribe = onSnapshot(
       userPrivateCollectionRef,
       (snapshot) => {
@@ -3941,12 +3932,7 @@ function AppShell() {
 
   useEffect(() => {
     if (!profile || !shootsCollectionRef) return undefined;
-    const cachedShoots = Array.isArray(initialCacheRef.current.shoots) ? initialCacheRef.current.shoots : [];
-    if (cachedShoots.length) {
-      startTransition(() => {
-        setShootDocs(cachedShoots.map((item) => normalizeStoredRecord(item.id, item)));
-      });
-    }
+    if (page !== "shooting") return undefined;
     const unsubscribe = onSnapshot(
       shootsCollectionRef,
       (snapshot) => {
@@ -3956,16 +3942,11 @@ function AppShell() {
       (error) => { console.error("[CRM] shoots:", error?.code); }
     );
     return () => unsubscribe();
-  }, [profile?.uid, shootsCollectionRef]);
+  }, [profile?.uid, shootsCollectionRef, page]);
 
   useEffect(() => {
     if (!profile || !meetingsCollectionRef) return undefined;
-    const cachedMeetings = Array.isArray(initialCacheRef.current.meetings) ? initialCacheRef.current.meetings : [];
-    if (cachedMeetings.length) {
-      startTransition(() => {
-        setMeetingDocs(cachedMeetings.map((item) => normalizeStoredRecord(item.id, item)));
-      });
-    }
+    if (page !== "meetings") return undefined;
     const unsubscribe = onSnapshot(
       meetingsCollectionRef,
       (snapshot) => {
@@ -3975,7 +3956,7 @@ function AppShell() {
       (error) => { console.error("[CRM] meetings:", error?.code); }
     );
     return () => unsubscribe();
-  }, [profile?.uid, meetingsCollectionRef]);
+  }, [profile?.uid, meetingsCollectionRef, page]);
 
   useEffect(() => {
     if (!profile || !notificationsCollectionRef) return undefined;
@@ -3998,12 +3979,7 @@ function AppShell() {
 
   useEffect(() => {
     if (!profile || !auditLogsCollectionRef) return undefined;
-    const cachedAudit = Array.isArray(initialCacheRef.current.auditLog) ? initialCacheRef.current.auditLog : [];
-    if (cachedAudit.length) {
-      startTransition(() => {
-        setAuditDocs(cachedAudit.map((item) => normalizeStoredRecord(item.id, item)));
-      });
-    }
+    if (page !== "notifications") return undefined;
     const unsubscribe = onSnapshot(
       auditLogsCollectionRef,
       (snapshot) => {
@@ -4013,12 +3989,12 @@ function AppShell() {
       (error) => { /* silent */ }
     );
     return () => unsubscribe();
-  }, [profile?.uid, auditLogsCollectionRef]);
+  }, [profile?.uid, auditLogsCollectionRef, page]);
 
   useEffect(() => {
     if (!profile || !selectedProjectId || !db) {
       setSelectedProjectWorkspace(EMPTY_PROJECT_WORKSPACE);
-      setProjectWorkspaceReady(false);
+      setProjectWorkspaceReady(true);
       return undefined;
     }
 
@@ -4111,17 +4087,14 @@ function AppShell() {
 
   useEffect(() => {
     if (!profile || !chatCollectionRef) return undefined;
-    setChatReady(false);
-    const cachedMessages = readCache(CHAT_CACHE_KEY, []);
-    if (Array.isArray(cachedMessages) && cachedMessages.length) {
-      const initialCursor = cachedMessages[0]?.createdAt || "";
+    if (page !== "chat") return undefined;
+    if (!chatMessages.length) setChatReady(false);
+    if (chatMessages.length) {
+      const initialCursor = chatMessages[0]?.createdAt || "";
       chatCursorRef.current = initialCursor;
-      startTransition(() => {
-        setChatMessages(cachedMessages);
-        setChatCursor(initialCursor);
-        setChatHasMore(cachedMessages.length >= 60);
-        setChatReady(true);
-      });
+      if (!chatCursor) setChatCursor(initialCursor);
+      setChatHasMore(chatMessages.length >= 60);
+      setChatReady(true);
     }
     const unsubscribe = onSnapshot(
       query(chatCollectionRef, orderBy("createdAt"), limitToLast(60)),
@@ -4151,7 +4124,7 @@ function AppShell() {
       }
     );
     return () => unsubscribe();
-  }, [profile?.uid, chatCollectionRef]);
+  }, [profile?.uid, chatCollectionRef, page]);
 
   // One-shot 2s safety net per login — forces all skeletons to resolve.
   // Deps = [profile?.uid] so it runs ONCE per session, not on every state change.
@@ -4192,8 +4165,9 @@ function AppShell() {
     return () => clearTimeout(timer);
   }, [profile?.uid, chatMessages, chatReady]);
 
-  const usersReady = publicUsersReady && (!canManagePeople(profile?.role) || privateUsersReady);
-  const crmReady = projectsReady && usersReady;
+  const usersReady = publicUsersReady;
+  const teamReady = publicUsersReady && (!canManagePeople(profile?.role) || privateUsersReady);
+  const crmReady = projectsReady && publicUsersReady;
   const employees = useMemo(() => visibleEmployees(profile, mergeEmployeeDocs(publicUsers, privateUsers, profile?.role, projectDocs), projectDocs), [profile, publicUsers, privateUsers, projectDocs]);
   const projects = useMemo(() => visibleProjects(profile, projectDocs), [profile, projectDocs]);
   // FIX: Only recalculate selectedProject when THIS project's meta changes,
@@ -4878,7 +4852,7 @@ function AppShell() {
               onSaveEmployee={saveEmployee}
               onCreateEmployee={createEmployee}
               onDeleteEmployee={deleteEmployee}
-              loading={!usersReady}
+              loading={!teamReady}
             />
           ) : null}
 
