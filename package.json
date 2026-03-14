@@ -1,7 +1,7 @@
 {
-  "name": "marketup-site",
+  "name": "retarget-crm",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,11 +9,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "firebase": "^12.10.0",
+    "firebase": "^10.14.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
     "vite": "^5.4.19"
   }
 }

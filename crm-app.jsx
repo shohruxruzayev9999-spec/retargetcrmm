@@ -6,7 +6,7 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
-import { collection, deleteDoc, doc, getDoc, getDocs, limit, limitToLast, onSnapshot, orderBy, query, setDoc, startAfter, writeBatch } from "firebase/firestore";
+import { collection, doc, endBefore, getDoc, getDocs, limit, limitToLast, onSnapshot, orderBy, query, setDoc, writeBatch } from "firebase/firestore";
 import { auth, db, googleProvider, hasFirebaseConfig } from "./firebase";
 
 const T = {
@@ -3665,6 +3665,7 @@ function AppShell() {
   const projectDocsRef = useRef([]);
   const publicUsersRef = useRef([]);
   const selectedProjectRef = useRef(null);
+  const chatCursorRef = useRef("");
   const initialCacheRef = useRef(readCache(CRM_CACHE_KEY, {}));
 
   const legacyRootRef = hasFirebaseConfig && db ? doc(db, "crm", ROOT_DOC_ID) : null;
@@ -4010,21 +4011,20 @@ function AppShell() {
       return undefined;
     }
 
-    setProjectWorkspaceReady(false);
+    // FIX: Load cache immediately so there is no flash of empty workspace
     const cachedWorkspace = readCache(projectWorkspaceCacheKey(selectedProjectId), null);
     if (cachedWorkspace) {
-      startTransition(() => {
-        setSelectedProjectWorkspace({
-          tasks: Array.isArray(cachedWorkspace.tasks) ? cachedWorkspace.tasks : [],
-          contentPlan: Array.isArray(cachedWorkspace.contentPlan) ? cachedWorkspace.contentPlan : [],
-          mediaPlan: Array.isArray(cachedWorkspace.mediaPlan) ? cachedWorkspace.mediaPlan : [],
-          plans: cachedWorkspace.plans || { daily: [], weekly: [], monthly: [] },
-          calls: Array.isArray(cachedWorkspace.calls) ? cachedWorkspace.calls : [],
-        });
-        setProjectWorkspaceReady(true);
+      setSelectedProjectWorkspace({
+        tasks: Array.isArray(cachedWorkspace.tasks) ? cachedWorkspace.tasks : [],
+        contentPlan: Array.isArray(cachedWorkspace.contentPlan) ? cachedWorkspace.contentPlan : [],
+        mediaPlan: Array.isArray(cachedWorkspace.mediaPlan) ? cachedWorkspace.mediaPlan : [],
+        plans: cachedWorkspace.plans || { daily: [], weekly: [], monthly: [] },
+        calls: Array.isArray(cachedWorkspace.calls) ? cachedWorkspace.calls : [],
       });
+      setProjectWorkspaceReady(true);
     } else {
       setSelectedProjectWorkspace(EMPTY_PROJECT_WORKSPACE);
+      setProjectWorkspaceReady(false);
     }
 
     const projectRef = doc(db, "projects", selectedProjectId);
@@ -4082,9 +4082,11 @@ function AppShell() {
     setChatReady(false);
     const cachedMessages = readCache(CHAT_CACHE_KEY, []);
     if (Array.isArray(cachedMessages) && cachedMessages.length) {
+      const initialCursor = cachedMessages[0]?.createdAt || "";
+      chatCursorRef.current = initialCursor;
       startTransition(() => {
         setChatMessages(cachedMessages);
-        setChatCursor(cachedMessages[0]?.createdAt || "");
+        setChatCursor(initialCursor);
         setChatHasMore(cachedMessages.length >= 60);
         setChatReady(true);
       });
@@ -4098,14 +4100,16 @@ function AppShell() {
           setChatMessages((current) => {
             const olderMessages = current.filter((message) => oldestLiveCreatedAt && String(message.createdAt || "") < String(oldestLiveCreatedAt));
             const merged = [...olderMessages, ...liveMessages];
-            const deduped = Object.values(indexById(merged)).sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
-            return deduped;
+            return Object.values(indexById(merged)).sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
           });
           setChatCursor((current) => {
-            if (current && oldestLiveCreatedAt) return String(current) < String(oldestLiveCreatedAt) ? current : oldestLiveCreatedAt;
-            return current || oldestLiveCreatedAt;
+            const next = (current && oldestLiveCreatedAt)
+              ? (String(current) < String(oldestLiveCreatedAt) ? current : oldestLiveCreatedAt)
+              : (current || oldestLiveCreatedAt);
+            chatCursorRef.current = next;
+            return next;
           });
-          setChatHasMore(liveMessages.length >= 60 || Boolean(chatCursor));
+          setChatHasMore((prev) => liveMessages.length >= 60 || prev);
           setChatReady(true);
         });
       },
@@ -4175,15 +4179,6 @@ function AppShell() {
     if (nextPage === "notifications") {
       markAllNotificationsRead();
     }
-  }
-
-  async function writeMetaDocs(meta, actor) {
-    return createMetaDocs(meta, actor).map((item) => ({
-      type: "set",
-      ref: doc(db, item.collection, item.id),
-      data: item.data,
-      options: { merge: false },
-    }));
   }
 
   function nextProjectListAfterSave(projectMetaDoc, projectId, mode = "upsert") {
@@ -4387,6 +4382,21 @@ function AppShell() {
       await commitBatchOperations(db, operations);
       if (meta.toastText || meta.notifyText) pushToast(meta.toastText || meta.notifyText);
     } catch (error) {
+      // On permission-denied, revert optimistic update by re-fetching from cache
+      if (String(error?.code || '').includes('permission-denied')) {
+        const cachedWs = readCache(projectWorkspaceCacheKey(nextProject.id), null);
+        if (cachedWs && selectedProjectId === nextProject.id) {
+          startTransition(() => {
+            setSelectedProjectWorkspace({
+              tasks: Array.isArray(cachedWs.tasks) ? cachedWs.tasks : [],
+              contentPlan: Array.isArray(cachedWs.contentPlan) ? cachedWs.contentPlan : [],
+              mediaPlan: Array.isArray(cachedWs.mediaPlan) ? cachedWs.mediaPlan : [],
+              plans: cachedWs.plans || { daily: [], weekly: [], monthly: [] },
+              calls: Array.isArray(cachedWs.calls) ? cachedWs.calls : [],
+            });
+          });
+        }
+      }
       setAuthError(humanizeAuthError(error));
       pushToast(humanizeAuthError(error), "error");
     } finally {
@@ -4624,18 +4634,26 @@ function AppShell() {
   }
 
   async function loadOlderMessages() {
-    if (!chatCollectionRef || !chatCursor || chatLoadingOlder) return;
+    const cursor = chatCursorRef.current;
+    if (!chatCollectionRef || !cursor || chatLoadingOlder) return;
     setChatLoadingOlder(true);
     try {
-      const snapshot = await getDocs(query(chatCollectionRef, orderBy("createdAt", "desc"), startAfter(chatCursor), limit(40)));
-      const olderMessages = snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())).reverse();
+      // FIX: Use asc + endBefore instead of desc + startAfter to get older messages
+      const snapshot = await getDocs(
+        query(chatCollectionRef, orderBy("createdAt", "asc"), endBefore(cursor), limitToLast(40))
+      );
+      const olderMessages = snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
       startTransition(() => {
         setChatMessages((current) => {
           const merged = [...olderMessages, ...current];
-          return Object.values(indexById(merged)).sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
+          return Object.values(indexById(merged)).sort((a, b) =>
+            String(a.createdAt || "").localeCompare(String(b.createdAt || ""))
+          );
         });
         if (olderMessages.length) {
-          setChatCursor(olderMessages[0].createdAt || chatCursor);
+          const newCursor = olderMessages[0].createdAt || cursor;
+          chatCursorRef.current = newCursor;
+          setChatCursor(newCursor);
         }
         setChatHasMore(snapshot.size === 40);
       });
@@ -4664,14 +4682,23 @@ function AppShell() {
       );
     });
     try {
-      await setDoc(doc(db, "chatMessages", message.id), { ...message, status: "sent" }, { merge: false });
+      const { status: _s, ...messageToStore } = message;
+      await setDoc(doc(db, "chatMessages", message.id), { ...messageToStore, status: "sent" }, { merge: false });
+      startTransition(() => {
+        setChatMessages((current) =>
+          current.map((item) => (item.id === message.id ? { ...item, status: "sent" } : item))
+        );
+      });
     } catch (error) {
       startTransition(() => {
         setChatMessages((current) =>
           current.map((item) => (item.id === message.id ? { ...item, status: "failed" } : item))
         );
       });
-      setAuthError(humanizeAuthError(error));
+      // Don't show permission-denied as top-level error for chat
+      if (!String(error?.code || '').includes('permission-denied')) {
+        setAuthError(humanizeAuthError(error));
+      }
       pushToast(humanizeAuthError(error), "error");
     }
   }
@@ -4807,7 +4834,7 @@ function AppShell() {
               onSaveEmployee={saveEmployee}
               onCreateEmployee={createEmployee}
               onDeleteEmployee={deleteEmployee}
-              loading={!crmReady}
+              loading={!usersReady}
             />
           ) : null}
 
@@ -4865,6 +4892,9 @@ function GlobalStyles() {
       }
       @media (max-width: 1080px) {
         main { max-width: 100% !important; padding: 24px !important; }
+      }
+      @media (max-width: 1200px) {
+        div[style*="gridTemplateColumns: repeat(4"] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
       }
       @media (max-width: 920px) {
         aside { width: 100% !important; min-height: auto !important; position: static !important; }
