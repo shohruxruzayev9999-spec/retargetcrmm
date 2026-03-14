@@ -784,12 +784,34 @@ async function commitBatchOperations(dbInstance, operations) {
   }
 }
 
+function stableSnapshotValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(stableSnapshotValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.keys(value)
+      .sort()
+      .reduce((acc, key) => {
+        acc[key] = stableSnapshotValue(value[key]);
+        return acc;
+      }, {});
+  }
+  return value ?? null;
+}
+
+function recordsEqual(left, right) {
+  return JSON.stringify(stableSnapshotValue(left)) === JSON.stringify(stableSnapshotValue(right));
+}
+
 function syncCollectionOperations(baseCollection, previousItems, nextItems) {
   const operations = [];
   const prevMap = indexById(previousItems || []);
   const nextMap = indexById(nextItems || []);
   Object.values(nextMap).forEach((item) => {
-    operations.push({ type: "set", ref: doc(baseCollection, item.id), data: { ...item }, options: { merge: false } });
+    const previous = prevMap[item.id];
+    if (!previous || !recordsEqual(previous, item)) {
+      operations.push({ type: "set", ref: doc(baseCollection, item.id), data: { ...item }, options: { merge: false } });
+    }
   });
   Object.keys(prevMap).forEach((id) => {
     if (!nextMap[id]) operations.push({ type: "delete", ref: doc(baseCollection, id) });
