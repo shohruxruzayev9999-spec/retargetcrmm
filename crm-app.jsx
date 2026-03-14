@@ -3686,12 +3686,19 @@ function AppShell() {
   }
 
   function applyOptimisticMetaDocs(metaDocs) {
-    metaDocs.forEach((item) => {
-      if (item.collection === "notifications") {
-        setNotificationDocs((current) => [normalizeStoredRecord(item.id, item.data), ...current].slice(0, 120));
+    // Batch both state updates to avoid 2 separate renders
+    const notifs = metaDocs.filter(i => i.collection === "notifications");
+    const audits = metaDocs.filter(i => i.collection === "auditLogs");
+    startTransition(() => {
+      if (notifs.length) {
+        setNotificationDocs((current) =>
+          [...notifs.map(i => normalizeStoredRecord(i.id, i.data)), ...current].slice(0, 120)
+        );
       }
-      if (item.collection === "auditLogs") {
-        setAuditDocs((current) => [normalizeStoredRecord(item.id, item.data), ...current].slice(0, 180));
+      if (audits.length) {
+        setAuditDocs((current) =>
+          [...audits.map(i => normalizeStoredRecord(i.id, i.data)), ...current].slice(0, 180)
+        );
       }
     });
   }
@@ -3984,9 +3991,7 @@ function AppShell() {
         const nextNotifications = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "createdAt").slice(0, 120);
         startTransition(() => setNotificationDocs(nextNotifications));
       },
-      (error) => {
-        setAuthError(humanizeAuthError(error));
-      }
+      (error) => { /* silent */ }
     );
     return () => unsubscribe();
   }, [profile?.uid, notificationsCollectionRef]);
@@ -4005,9 +4010,7 @@ function AppShell() {
         const nextAuditDocs = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "createdAt").slice(0, 180);
         startTransition(() => setAuditDocs(nextAuditDocs));
       },
-      (error) => {
-        setAuthError(humanizeAuthError(error));
-      }
+      (error) => { /* silent */ }
     );
     return () => unsubscribe();
   }, [profile?.uid, auditLogsCollectionRef]);
@@ -4036,47 +4039,68 @@ function AppShell() {
     }
 
     const projectRef = doc(db, "projects", selectedProjectId);
-    const loaded = { tasks: false, content: false, media: false, plans: false, calls: false };
 
-    function commitWorkspacePatch(key, patch) {
-      loaded[key] = true;
-      startTransition(() => {
-        setSelectedProjectWorkspace((current) => {
-          const next = { ...current, ...patch };
-          writeCache(projectWorkspaceCacheKey(selectedProjectId), next);
-          return next;
+    // FLICKER FIX: Accumulate all 5 subcollection patches in a ref,
+    // then flush to state in a single batch using setTimeout(0).
+    // Without this, 5 separate setSelectedProjectWorkspace calls = 5 re-renders.
+    const pendingPatch = { tasks: null, contentPlan: null, mediaPlan: null, plans: null, calls: null };
+    const loadedKeys = new Set();
+    let flushTimer = null;
+
+    function scheduleFlush(projectIdSnapshot) {
+      if (flushTimer) return; // already scheduled
+      flushTimer = setTimeout(() => {
+        flushTimer = null;
+        const patch = {};
+        if (pendingPatch.tasks !== null)       patch.tasks       = pendingPatch.tasks;
+        if (pendingPatch.contentPlan !== null) patch.contentPlan = pendingPatch.contentPlan;
+        if (pendingPatch.mediaPlan !== null)   patch.mediaPlan   = pendingPatch.mediaPlan;
+        if (pendingPatch.plans !== null)       patch.plans       = pendingPatch.plans;
+        if (pendingPatch.calls !== null)       patch.calls       = pendingPatch.calls;
+        startTransition(() => {
+          setSelectedProjectWorkspace((current) => {
+            const next = { ...current, ...patch };
+            writeCache(projectWorkspaceCacheKey(projectIdSnapshot), next);
+            return next;
+          });
+          const allLoaded = ["tasks","contentPlan","mediaPlan","plans","calls"].every(k => loadedKeys.has(k));
+          if (allLoaded) setProjectWorkspaceReady(true);
         });
-        if (Object.values(loaded).every(Boolean)) {
-          setProjectWorkspaceReady(true);
-        }
-      });
+      }, 0);
+    }
+
+    function commitWorkspacePatch(key, patch, projectIdSnapshot) {
+      Object.assign(pendingPatch, patch);
+      loadedKeys.add(key);
+      scheduleFlush(projectIdSnapshot);
     }
 
     function handleWorkspaceError(error) {
-      console.error('[CRM] workspace onSnapshot error:', error?.code, error?.message);
-      setProjectWorkspaceReady(true); // Always resolve skeleton
+      console.error("[CRM] workspace onSnapshot error:", error?.code, error?.message);
+      setProjectWorkspaceReady(true);
     }
 
+    const pid = selectedProjectId;
     const unsubscribes = [
       onSnapshot(collection(projectRef, "tasks"), (snapshot) => {
-        const tasks = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "updatedAt").reverse();
-        commitWorkspacePatch("tasks", { tasks });
+        const tasks = sortByRecent(snapshot.docs.map((e) => normalizeStoredRecord(e.id, e.data())), "updatedAt").reverse();
+        commitWorkspacePatch("tasks", { tasks }, pid);
       }, handleWorkspaceError),
       onSnapshot(collection(projectRef, "content"), (snapshot) => {
-        const contentPlan = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "updatedAt").reverse();
-        commitWorkspacePatch("content", { contentPlan });
+        const contentPlan = sortByRecent(snapshot.docs.map((e) => normalizeStoredRecord(e.id, e.data())), "updatedAt").reverse();
+        commitWorkspacePatch("contentPlan", { contentPlan }, pid);
       }, handleWorkspaceError),
       onSnapshot(collection(projectRef, "mediaPlans"), (snapshot) => {
-        const mediaPlan = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "updatedAt").reverse();
-        commitWorkspacePatch("media", { mediaPlan });
+        const mediaPlan = sortByRecent(snapshot.docs.map((e) => normalizeStoredRecord(e.id, e.data())), "updatedAt").reverse();
+        commitWorkspacePatch("mediaPlan", { mediaPlan }, pid);
       }, handleWorkspaceError),
       onSnapshot(collection(projectRef, "plans"), (snapshot) => {
-        const planItems = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "updatedAt").reverse();
-        commitWorkspacePatch("plans", { plans: splitPlans(planItems) });
+        const planItems = sortByRecent(snapshot.docs.map((e) => normalizeStoredRecord(e.id, e.data())), "updatedAt").reverse();
+        commitWorkspacePatch("plans", { plans: splitPlans(planItems) }, pid);
       }, handleWorkspaceError),
       onSnapshot(collection(projectRef, "calls"), (snapshot) => {
-        const calls = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "updatedAt").reverse();
-        commitWorkspacePatch("calls", { calls });
+        const calls = sortByRecent(snapshot.docs.map((e) => normalizeStoredRecord(e.id, e.data())), "updatedAt").reverse();
+        commitWorkspacePatch("calls", { calls }, pid);
       }, handleWorkspaceError),
     ];
 
@@ -4145,22 +4169,29 @@ function AppShell() {
     return () => clearTimeout(timeout);
   }, [profile?.uid, profile?.role, projectsReady, publicUsersReady, privateUsersReady, chatReady, selectedProjectId]);
 
+  // Cache write debounced — prevent extra re-renders from rapid state updates
   useEffect(() => {
-    if (!profile) return;
-    writeCache(CRM_CACHE_KEY, {
-      projects: projectDocs,
-      users: publicUsers,
-      userPrivate: privateUsers,
-      shoots: shootDocs,
-      meetings: meetingDocs,
-      notifications: notificationDocs,
-      auditLog: auditDocs,
-    });
+    if (!profile) return undefined;
+    const timer = setTimeout(() => {
+      writeCache(CRM_CACHE_KEY, {
+        projects: projectDocs,
+        users: publicUsers,
+        userPrivate: privateUsers,
+        shoots: shootDocs,
+        meetings: meetingDocs,
+        notifications: notificationDocs,
+        auditLog: auditDocs,
+      });
+    }, 400);
+    return () => clearTimeout(timer);
   }, [profile?.uid, projectDocs, publicUsers, privateUsers, shootDocs, meetingDocs, notificationDocs, auditDocs]);
 
   useEffect(() => {
-    if (!profile || !chatReady) return;
-    writeCache(CHAT_CACHE_KEY, chatMessages.slice(-160));
+    if (!profile || !chatReady) return undefined;
+    const timer = setTimeout(() => {
+      writeCache(CHAT_CACHE_KEY, chatMessages.slice(-160));
+    }, 400);
+    return () => clearTimeout(timer);
   }, [profile?.uid, chatMessages, chatReady]);
 
   const usersReady = publicUsersReady && (!canManagePeople(profile?.role) || privateUsersReady);
