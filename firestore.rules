@@ -129,6 +129,7 @@ service cloud.firestore {
       allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
       allow update: if signedIn() &&
         (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(["readBy"]) ||
           resource.data.userId == request.auth.uid ||
           isManagerRole()
         );

@@ -4574,6 +4574,7 @@ export default function App() {
         }))
       );
     } catch (error) {
+      if (String(error?.code || "").includes("permission-denied")) return;
       setAuthError(humanizeAuthError(error));
     }
   }
