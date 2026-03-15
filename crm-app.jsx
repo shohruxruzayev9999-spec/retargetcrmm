@@ -498,6 +498,10 @@ function canManagePeople(role) {
   return PEOPLE_ROLES.has(role);
 }
 
+function canRunRuntimeMigration(role) {
+  return ENABLE_RUNTIME_MIGRATION && canManagePeople(role);
+}
+
 function isProjectMember(profile, project) {
   if (!profile || !project) return false;
   return project.managerId === profile.uid || project.teamIds.includes(profile.uid);
@@ -3871,7 +3875,7 @@ function AppShell() {
       setMigrationReady(true);
       return undefined;
     }
-    if (!ENABLE_RUNTIME_MIGRATION) {
+    if (!canRunRuntimeMigration(profile.role)) {
       setMigrationReady(true);
       return undefined;
     }
@@ -4153,6 +4157,17 @@ function AppShell() {
       setBootSettled(true);
     }
   }, [projectsReady, publicUsersReady, migrationReady]);
+
+  useEffect(() => {
+    if (!profile || bootSettled || !migrationReady) return undefined;
+    const timer = setTimeout(() => {
+      setBootSettled(true);
+      if (!projectsReady && !publicUsersReady && !authError) {
+        setAuthError("Realtime ma'lumotlar serverdan kechikib kelmoqda. Agar bu holat saqlansa, CEO/Admin bir marta kirib CRM sinxronizatsiyasini tekshirsin.");
+      }
+    }, 1800);
+    return () => clearTimeout(timer);
+  }, [profile?.uid, bootSettled, migrationReady, projectsReady, publicUsersReady, authError]);
 
   // Cache write debounced — prevent extra re-renders from rapid state updates
   useEffect(() => {
