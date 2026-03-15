@@ -4162,7 +4162,7 @@ function AppShell() {
   }, [projectsReady, publicUsersReady, migrationReady]);
 
   useEffect(() => {
-    if (!profile || bootSettled || !migrationReady) return undefined;
+    if (!profile || bootSettled || !migrationReady || !canManagePeople(profile.role)) return undefined;
     const timer = setTimeout(() => {
       setBootSettled(true);
       if (!projectsReady && !publicUsersReady && !authError) {
@@ -4203,10 +4203,10 @@ function AppShell() {
   const teamLoading = !bootSettled && !teamReady && effectivePublicUsers.length === 0;
 
   useEffect(() => {
-    if (authError === REALTIME_DELAY_MESSAGE && crmReady) {
+    if (authError === REALTIME_DELAY_MESSAGE && (crmReady || !canManagePeople(profile?.role))) {
       setAuthError("");
     }
-  }, [authError, crmReady]);
+  }, [authError, crmReady, profile?.role]);
 
   const employees = useMemo(
     () => visibleEmployees(profile, mergeEmployeeDocs(effectivePublicUsers, privateUsers, profile?.role, effectiveProjectDocs), effectiveProjectDocs),
