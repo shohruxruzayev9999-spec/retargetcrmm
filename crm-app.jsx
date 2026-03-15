@@ -110,6 +110,8 @@ const ROOT_DOC_ID = "agency-crm";
 const CRM_CACHE_KEY = `agency-crm-cache:${ROOT_DOC_ID}`;
 const CHAT_CACHE_KEY = `agency-crm-chat-cache:${ROOT_DOC_ID}`;
 const SCHEMA_VERSION = 3;
+const ENABLE_CLIENT_CACHE = false;
+const ENABLE_RUNTIME_MIGRATION = import.meta.env.VITE_ENABLE_RUNTIME_MIGRATION === "1";
 const EDITOR_ROLES = new Set(["CEO", "MANAGER", "SUPERVISOR"]);
 const REPORT_ROLES = new Set(["CEO", "INVESTOR"]);
 const PEOPLE_ROLES = new Set(["CEO", "MANAGER", "SUPERVISOR"]);
@@ -168,6 +170,7 @@ function readCache(key, fallback) {
 }
 
 function writeCache(key, value) {
+  if (!ENABLE_CLIENT_CACHE) return;
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
@@ -3704,6 +3707,7 @@ function AppShell() {
   const [chatLoadingOlder, setChatLoadingOlder] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [migrationReady, setMigrationReady] = useState(!ENABLE_RUNTIME_MIGRATION);
   const [syncing, setSyncing] = useState(false);
   const [toasts, setToasts] = useState([]);
   const pendingRegistrationRef = useRef(null);
@@ -3714,6 +3718,7 @@ function AppShell() {
   const chatCursorRef = useRef(null);
 
   const legacyRootRef = hasFirebaseConfig && db ? doc(db, "crm", ROOT_DOC_ID) : null;
+  const migrationMetaRef = hasFirebaseConfig && db ? doc(db, "crmMeta", ROOT_DOC_ID) : null;
   const projectsCollectionRef = hasFirebaseConfig && db ? collection(db, "projects") : null;
   const usersCollectionRef = hasFirebaseConfig && db ? collection(db, "users") : null;
   const userPrivateCollectionRef = hasFirebaseConfig && db ? collection(db, "userPrivate") : null;
@@ -3790,6 +3795,8 @@ function AppShell() {
           setChatHasMore(false);
           chatCursorRef.current = null;
           migrationRef.current = false;
+          setMigrationReady(!ENABLE_RUNTIME_MIGRATION);
+          setBootSettled(false);
           setBooting(false);
           return;
         }
@@ -3860,11 +3867,26 @@ function AppShell() {
   }, []);
 
   useEffect(() => {
-    if (!profile || !legacyRootRef || migrationRef.current) return undefined;
+    if (!profile || !legacyRootRef || !migrationMetaRef) {
+      setMigrationReady(true);
+      return undefined;
+    }
+    if (!ENABLE_RUNTIME_MIGRATION) {
+      setMigrationReady(true);
+      return undefined;
+    }
+    if (migrationRef.current) return undefined;
     let cancelled = false;
     migrationRef.current = true;
     (async () => {
       try {
+        setMigrationReady(false);
+        const metaSnapshot = await getDoc(migrationMetaRef);
+        const schemaVersion = Number(metaSnapshot.data()?.schemaVersion || 0);
+        if (schemaVersion >= SCHEMA_VERSION) {
+          if (!cancelled) setMigrationReady(true);
+          return;
+        }
         const result = await migrateLegacyRootSchema({ dbInstance: db, legacyRootRef, actor: profile });
         if (!cancelled && result.migrated) {
           pushToast("Firestore schema yangi collection modeliga ko'chirildi.");
@@ -3874,15 +3896,19 @@ function AppShell() {
           setAuthError(humanizeAuthError(error));
           pushToast(humanizeAuthError(error), "error");
         }
+      } finally {
+        if (!cancelled) {
+          setMigrationReady(true);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [profile?.uid, legacyRootRef]);
+  }, [profile?.uid, legacyRootRef, migrationMetaRef]);
 
   useEffect(() => {
-    if (!profile || !projectsCollectionRef) return undefined;
+    if (!profile || !projectsCollectionRef || !migrationReady) return undefined;
     if (!projectDocs.length) setProjectsReady(false);
     const unsubscribe = onSnapshot(
       projectsCollectionRef,
@@ -3900,10 +3926,10 @@ function AppShell() {
       }
     );
     return () => unsubscribe();
-  }, [profile?.uid, projectsCollectionRef]);
+  }, [profile?.uid, projectsCollectionRef, migrationReady]);
 
   useEffect(() => {
-    if (!profile || !usersCollectionRef) return undefined;
+    if (!profile || !usersCollectionRef || !migrationReady) return undefined;
     if (!publicUsers.length) setPublicUsersReady(false);
     const unsubscribe = onSnapshot(
       usersCollectionRef,
@@ -3922,10 +3948,10 @@ function AppShell() {
       }
     );
     return () => unsubscribe();
-  }, [profile?.uid, usersCollectionRef]);
+  }, [profile?.uid, usersCollectionRef, migrationReady]);
 
   useEffect(() => {
-    if (!profile || !userPrivateCollectionRef) return undefined;
+    if (!profile || !userPrivateCollectionRef || !migrationReady) return undefined;
     if (!canManagePeople(profile.role)) {
       setPrivateUsers({});
       setPrivateUsersReady(true);
@@ -3951,10 +3977,10 @@ function AppShell() {
       }
     );
     return () => unsubscribe();
-  }, [profile?.uid, userPrivateCollectionRef, profile?.role]);
+  }, [profile?.uid, userPrivateCollectionRef, profile?.role, migrationReady]);
 
   useEffect(() => {
-    if (!profile || !shootsCollectionRef) return undefined;
+    if (!profile || !shootsCollectionRef || !migrationReady) return undefined;
     if (page !== "shooting") return undefined;
     const unsubscribe = onSnapshot(
       shootsCollectionRef,
@@ -3965,10 +3991,10 @@ function AppShell() {
       (error) => { console.error("[CRM] shoots:", error?.code); }
     );
     return () => unsubscribe();
-  }, [profile?.uid, shootsCollectionRef, page]);
+  }, [profile?.uid, shootsCollectionRef, page, migrationReady]);
 
   useEffect(() => {
-    if (!profile || !meetingsCollectionRef) return undefined;
+    if (!profile || !meetingsCollectionRef || !migrationReady) return undefined;
     if (page !== "meetings") return undefined;
     const unsubscribe = onSnapshot(
       meetingsCollectionRef,
@@ -3979,10 +4005,10 @@ function AppShell() {
       (error) => { console.error("[CRM] meetings:", error?.code); }
     );
     return () => unsubscribe();
-  }, [profile?.uid, meetingsCollectionRef, page]);
+  }, [profile?.uid, meetingsCollectionRef, page, migrationReady]);
 
   useEffect(() => {
-    if (!profile || !notificationsCollectionRef) return undefined;
+    if (!profile || !notificationsCollectionRef || !migrationReady) return undefined;
     const unsubscribe = onSnapshot(
       notificationsCollectionRef,
       (snapshot) => {
@@ -3995,10 +4021,10 @@ function AppShell() {
       }
     );
     return () => unsubscribe();
-  }, [profile?.uid, notificationsCollectionRef]);
+  }, [profile?.uid, notificationsCollectionRef, migrationReady]);
 
   useEffect(() => {
-    if (!profile || !auditLogsCollectionRef) return undefined;
+    if (!profile || !auditLogsCollectionRef || !migrationReady) return undefined;
     if (page !== "notifications") return undefined;
     const unsubscribe = onSnapshot(
       auditLogsCollectionRef,
@@ -4012,10 +4038,10 @@ function AppShell() {
       }
     );
     return () => unsubscribe();
-  }, [profile?.uid, auditLogsCollectionRef, page]);
+  }, [profile?.uid, auditLogsCollectionRef, page, migrationReady]);
 
   useEffect(() => {
-    if (!profile || !selectedProjectId || !db) {
+    if (!profile || !selectedProjectId || !db || !migrationReady) {
       setSelectedProjectWorkspace(EMPTY_PROJECT_WORKSPACE);
       setProjectWorkspaceReady(true);
       return undefined;
@@ -4091,10 +4117,10 @@ function AppShell() {
     return () => {
       unsubscribes.forEach((unsubscribe) => unsubscribe());
     };
-  }, [profile?.uid, selectedProjectId]);
+  }, [profile?.uid, selectedProjectId, migrationReady]);
 
   useEffect(() => {
-    if (!profile || !chatCollectionRef) return undefined;
+    if (!profile || !chatCollectionRef || !migrationReady) return undefined;
     if (!chatMessages.length) setChatReady(false);
     const unsubscribe = onSnapshot(
       query(chatCollectionRef, orderBy("createdAt"), limitToLast(60)),
@@ -4120,13 +4146,13 @@ function AppShell() {
       }
     );
     return () => unsubscribe();
-  }, [profile?.uid, chatCollectionRef]);
+  }, [profile?.uid, chatCollectionRef, migrationReady]);
 
   useEffect(() => {
-    if (projectsReady || publicUsersReady) {
+    if (migrationReady && (projectsReady || publicUsersReady)) {
       setBootSettled(true);
     }
-  }, [projectsReady, publicUsersReady]);
+  }, [projectsReady, publicUsersReady, migrationReady]);
 
   // Cache write debounced — prevent extra re-renders from rapid state updates
   useEffect(() => {
@@ -4155,8 +4181,8 @@ function AppShell() {
 
   const usersReady = publicUsersReady;
   const teamReady = publicUsersReady && (!canManagePeople(profile?.role) || privateUsersReady);
-  const crmReady = projectsReady && publicUsersReady;
-  const primaryLoading = !bootSettled && !crmReady && projectDocs.length === 0 && publicUsers.length === 0;
+  const crmReady = migrationReady && projectsReady && publicUsersReady;
+  const primaryLoading = !bootSettled && !crmReady && migrationReady && projectDocs.length === 0 && publicUsers.length === 0;
   const teamLoading = !bootSettled && !teamReady && publicUsers.length === 0;
   const chatPageLoading = !bootSettled && !chatReady && chatMessages.length === 0;
   const employees = useMemo(() => visibleEmployees(profile, mergeEmployeeDocs(publicUsers, privateUsers, profile?.role, projectDocs), projectDocs), [profile, publicUsers, privateUsers, projectDocs]);
@@ -4200,8 +4226,10 @@ function AppShell() {
   async function syncAssignedProjectIds(ops, nextProjects, affectedUserIds) {
     const assignmentMap = buildAssignedProjectIdsMap(nextProjects);
     affectedUserIds.forEach((userId) => {
-      const currentAssigned = Array.isArray(publicUsersRef.current.find((item) => item.id === userId)?.assignedProjectIds)
-        ? publicUsersRef.current.find((item) => item.id === userId).assignedProjectIds
+      const targetUser = publicUsersRef.current.find((item) => item.id === userId);
+      if (!targetUser) return;
+      const currentAssigned = Array.isArray(targetUser.assignedProjectIds)
+        ? targetUser.assignedProjectIds
         : [];
       const nextAssigned = assignmentMap[userId] || [];
       if (recordsEqual(currentAssigned, nextAssigned)) return;
