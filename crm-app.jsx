@@ -106,6 +106,12 @@ const EMPTY_PROJECT_WORKSPACE = {
   calls: [],
 };
 
+const EMPTY_LEGACY_FALLBACK = {
+  projects: [],
+  publicUsers: [],
+  workspaceByProjectId: {},
+};
+
 const ROOT_DOC_ID = "agency-crm";
 const CRM_CACHE_KEY = `agency-crm-cache:${ROOT_DOC_ID}`;
 const CHAT_CACHE_KEY = `agency-crm-chat-cache:${ROOT_DOC_ID}`;
@@ -352,6 +358,69 @@ function employeeToPrivateDoc(employee) {
     load: Number(employee.load || 0),
     updatedAt: isoNow(),
   };
+}
+
+function profileToPublicUser(profile) {
+  if (!profile) return null;
+  return normalizeStoredUser(
+    profile.uid,
+    employeeToPublicDoc({
+      id: profile.uid,
+      email: profile.email || "",
+      name: profile.name || "",
+      avatarUrl: profile.avatarUrl || "",
+      roleCode: profile.role || "EMPLOYEE",
+      role: profile.title || ROLE_META[profile.role]?.title || "Xodim",
+      dept: profile.dept || ROLE_META[profile.role]?.dept || "SMM bo'limi",
+      assignedProjectIds: [],
+      createdAt: profile.createdAt || isoNow(),
+      updatedAt: isoNow(),
+      status: "active",
+    })
+  );
+}
+
+function buildLegacyFallback(payload, actor) {
+  const legacy = normalizeCrmPayload(payload);
+  const assignedProjectIdsMap = buildAssignedProjectIdsMap(legacy.projects);
+  const projects = sortByRecent(
+    legacy.projects.map((project) => normalizeStoredProjectMeta(project.id, projectMetaDocFromProject(project, actor, project))),
+    "updatedAt"
+  ).filter((project) => !project.archived);
+  const workspaceByProjectId = Object.fromEntries(
+    legacy.projects.map((project) => [
+      project.id,
+      {
+        tasks: Array.isArray(project.tasks) ? project.tasks : [],
+        contentPlan: Array.isArray(project.contentPlan) ? project.contentPlan : [],
+        mediaPlan: Array.isArray(project.mediaPlan) ? project.mediaPlan : [],
+        plans: {
+          daily: Array.isArray(project.plans?.daily) ? project.plans.daily : [],
+          weekly: Array.isArray(project.plans?.weekly) ? project.plans.weekly : [],
+          monthly: Array.isArray(project.plans?.monthly) ? project.plans.monthly : [],
+        },
+        calls: Array.isArray(project.calls) ? project.calls : [],
+      },
+    ])
+  );
+  const publicUsers = legacy.employees
+    .map((employee, index) => {
+      const id = employee.id || employee.uid || employee.email || `legacy_employee_${index}`;
+      return normalizeStoredUser(
+        id,
+        employeeToPublicDoc({
+          ...employee,
+          id,
+          roleCode: employee.roleCode || "EMPLOYEE",
+          assignedProjectIds: assignedProjectIdsMap[id] || employee.assignedProjectIds || [],
+          createdAt: employee.createdAt || isoNow(),
+          updatedAt: employee.updatedAt || isoNow(),
+        })
+      );
+    })
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+
+  return { projects, publicUsers, workspaceByProjectId };
 }
 
 function mergeEmployeeDocs(publicUsers, privateUsers, viewerRole, projects = []) {
@@ -3692,6 +3761,7 @@ function AppShell() {
   const [projectDocs, setProjectDocs] = useState(initialProjects);
   const [publicUsers, setPublicUsers] = useState(initialPublicUsers);
   const [privateUsers, setPrivateUsers] = useState(initialPrivateUsers);
+  const [legacyFallback, setLegacyFallback] = useState(EMPTY_LEGACY_FALLBACK);
   const [shootDocs, setShootDocs] = useState(initialShoots);
   const [meetingDocs, setMeetingDocs] = useState(initialMeetings);
   const [notificationDocs, setNotificationDocs] = useState(initialNotifications);
@@ -3785,6 +3855,7 @@ function AppShell() {
           setProjectDocs([]);
           setPublicUsers([]);
           setPrivateUsers({});
+          setLegacyFallback(EMPTY_LEGACY_FALLBACK);
           setShootDocs([]);
           setMeetingDocs([]);
           setNotificationDocs([]);
@@ -3910,6 +3981,38 @@ function AppShell() {
       cancelled = true;
     };
   }, [profile?.uid, legacyRootRef, migrationMetaRef]);
+
+  useEffect(() => {
+    if (!profile || !legacyRootRef || !migrationReady) {
+      setLegacyFallback(EMPTY_LEGACY_FALLBACK);
+      return undefined;
+    }
+    if (projectDocs.length && publicUsers.length) {
+      setLegacyFallback(EMPTY_LEGACY_FALLBACK);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const snapshot = await getDoc(legacyRootRef);
+        if (cancelled) return;
+        if (!snapshot.exists()) {
+          setLegacyFallback(EMPTY_LEGACY_FALLBACK);
+          return;
+        }
+        const nextFallback = buildLegacyFallback(snapshot.data()?.payload, profile);
+        setLegacyFallback(nextFallback);
+        if ((nextFallback.projects.length > 0 || nextFallback.publicUsers.length > 0) && authError.startsWith("Realtime ma'lumotlar")) {
+          setAuthError("");
+        }
+      } catch (error) {
+        console.error("[CRM] legacy fallback error:", error?.code, error?.message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.uid, legacyRootRef, migrationReady, projectDocs.length, publicUsers.length, authError]);
 
   useEffect(() => {
     if (!profile || !projectsCollectionRef || !migrationReady) return undefined;
@@ -4153,21 +4256,21 @@ function AppShell() {
   }, [profile?.uid, chatCollectionRef, migrationReady]);
 
   useEffect(() => {
-    if (migrationReady && (projectsReady || publicUsersReady)) {
+    if (migrationReady && (projectsReady || publicUsersReady || legacyFallback.projects.length > 0 || legacyFallback.publicUsers.length > 0)) {
       setBootSettled(true);
     }
-  }, [projectsReady, publicUsersReady, migrationReady]);
+  }, [projectsReady, publicUsersReady, migrationReady, legacyFallback.projects.length, legacyFallback.publicUsers.length]);
 
   useEffect(() => {
     if (!profile || bootSettled || !migrationReady) return undefined;
     const timer = setTimeout(() => {
       setBootSettled(true);
-      if (!projectsReady && !publicUsersReady && !authError) {
+      if (!projectsReady && !publicUsersReady && legacyFallback.projects.length === 0 && legacyFallback.publicUsers.length === 0 && !authError) {
         setAuthError("Realtime ma'lumotlar serverdan kechikib kelmoqda. Agar bu holat saqlansa, CEO/Admin bir marta kirib CRM sinxronizatsiyasini tekshirsin.");
       }
     }, 1800);
     return () => clearTimeout(timer);
-  }, [profile?.uid, bootSettled, migrationReady, projectsReady, publicUsersReady, authError]);
+  }, [profile?.uid, bootSettled, migrationReady, projectsReady, publicUsersReady, legacyFallback.projects.length, legacyFallback.publicUsers.length, authError]);
 
   // Cache write debounced — prevent extra re-renders from rapid state updates
   useEffect(() => {
@@ -4194,28 +4297,50 @@ function AppShell() {
     return () => clearTimeout(timer);
   }, [profile?.uid, chatMessages, chatReady]);
 
-  const usersReady = publicUsersReady;
-  const teamReady = publicUsersReady && (!canManagePeople(profile?.role) || privateUsersReady);
-  const crmReady = migrationReady && projectsReady && publicUsersReady;
-  const primaryLoading = !bootSettled && !crmReady && migrationReady && projectDocs.length === 0 && publicUsers.length === 0;
-  const teamLoading = !bootSettled && !teamReady && publicUsers.length === 0;
+  const effectiveProjectDocs = useMemo(
+    () => (projectDocs.length ? projectDocs : legacyFallback.projects),
+    [projectDocs, legacyFallback.projects]
+  );
+  const effectivePublicUsers = useMemo(() => {
+    const sourceUsers = publicUsers.length ? publicUsers : legacyFallback.publicUsers;
+    const selfUser = profileToPublicUser(profile);
+    const mergedUsers = selfUser ? Object.values(indexById([...sourceUsers, selfUser])) : sourceUsers;
+    return [...mergedUsers].sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+  }, [publicUsers, legacyFallback.publicUsers, profile]);
+  const selectedLegacyWorkspace = useMemo(
+    () => (selectedProjectId ? legacyFallback.workspaceByProjectId[selectedProjectId] || EMPTY_PROJECT_WORKSPACE : EMPTY_PROJECT_WORKSPACE),
+    [legacyFallback.workspaceByProjectId, selectedProjectId]
+  );
+  const usingLegacyProjects = projectDocs.length === 0 && legacyFallback.projects.length > 0;
+  const usersReady = publicUsersReady || effectivePublicUsers.length > 0;
+  const teamReady = usersReady && (!canManagePeople(profile?.role) || privateUsersReady);
+  const crmReady = migrationReady && (projectsReady || effectiveProjectDocs.length > 0) && usersReady;
+  const primaryLoading = !bootSettled && !crmReady && migrationReady && effectiveProjectDocs.length === 0 && effectivePublicUsers.length === 0;
+  const teamLoading = !bootSettled && !teamReady && effectivePublicUsers.length === 0;
   const chatPageLoading = !bootSettled && !chatReady && chatMessages.length === 0;
-  const employees = useMemo(() => visibleEmployees(profile, mergeEmployeeDocs(publicUsers, privateUsers, profile?.role, projectDocs), projectDocs), [profile, publicUsers, privateUsers, projectDocs]);
-  const projects = useMemo(() => visibleProjects(profile, projectDocs), [profile, projectDocs]);
+  const employees = useMemo(
+    () => visibleEmployees(profile, mergeEmployeeDocs(effectivePublicUsers, privateUsers, profile?.role, effectiveProjectDocs), effectiveProjectDocs),
+    [profile, effectivePublicUsers, privateUsers, effectiveProjectDocs]
+  );
+  const projects = useMemo(() => visibleProjects(profile, effectiveProjectDocs), [profile, effectiveProjectDocs]);
   // FIX: Only recalculate selectedProject when THIS project's meta changes,
   // not when any other project in projectDocs changes.
   const selectedProjectMeta = useMemo(() => {
     if (!selectedProjectId) return null;
-    return projectDocs.find((p) => p.id === selectedProjectId) || null;
-  }, [selectedProjectId, projectDocs]);
+    return effectiveProjectDocs.find((p) => p.id === selectedProjectId) || null;
+  }, [selectedProjectId, effectiveProjectDocs]);
 
   const selectedProject = useMemo(() => {
     if (!selectedProjectId || !selectedProjectMeta) return null;
-    return hydrateProject(selectedProjectMeta, selectedProjectWorkspace);
-  }, [selectedProjectId, selectedProjectMeta, selectedProjectWorkspace]);
-  const shoots = useMemo(() => visibleShoots(profile, shootDocs, projectDocs), [profile, shootDocs, projectDocs]);
+    return hydrateProject(selectedProjectMeta, usingLegacyProjects ? selectedLegacyWorkspace : selectedProjectWorkspace);
+  }, [selectedProjectId, selectedProjectMeta, selectedProjectWorkspace, selectedLegacyWorkspace, usingLegacyProjects]);
+  const shoots = useMemo(() => visibleShoots(profile, shootDocs, effectiveProjectDocs), [profile, shootDocs, effectiveProjectDocs]);
   const projectCaches = useMemo(() => buildProjectCaches(projects), [projects]);
   const unreadCount = useMemo(() => (profile ? unreadNotifications(notificationDocs, profile.uid) : 0), [notificationDocs, profile]);
+
+  useEffect(() => {
+    publicUsersRef.current = effectivePublicUsers;
+  }, [effectivePublicUsers]);
 
   useEffect(() => {
     selectedProjectRef.current = selectedProject;
