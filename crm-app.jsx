@@ -6,7 +6,7 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
-import { Timestamp, collection, doc, endBefore, getDoc, getDocs, limit, limitToLast, onSnapshot, orderBy, query, serverTimestamp, setDoc, writeBatch } from "firebase/firestore";
+import { Timestamp, collection, doc, getDoc, onSnapshot, setDoc, writeBatch } from "firebase/firestore";
 import { auth, db, googleProvider, hasFirebaseConfig } from "./firebase";
 
 const T = {
@@ -114,7 +114,6 @@ const EMPTY_LEGACY_FALLBACK = {
 
 const ROOT_DOC_ID = "agency-crm";
 const CRM_CACHE_KEY = `agency-crm-cache:${ROOT_DOC_ID}`;
-const CHAT_CACHE_KEY = `agency-crm-chat-cache:${ROOT_DOC_ID}`;
 const SCHEMA_VERSION = 3;
 const ENABLE_CLIENT_CACHE = false;
 const ENABLE_RUNTIME_MIGRATION = import.meta.env.VITE_ENABLE_RUNTIME_MIGRATION === "1";
@@ -205,7 +204,6 @@ function projectWorkspaceCacheKey(userId, projectId) {
 function clearUserCaches(userId, projectIds = []) {
   if (!userId) return;
   clearCache(userScopedCacheKey(CRM_CACHE_KEY, userId));
-  clearCache(userScopedCacheKey(CHAT_CACHE_KEY, userId));
   projectIds.forEach((projectId) => clearCache(projectWorkspaceCacheKey(userId, projectId)));
 }
 
@@ -1122,7 +1120,6 @@ function pageLabel(page) {
     meetings: "Uchrashuvlar",
     reports: "Hisobotlar",
     workflow: "Workflow",
-    chat: "Chat",
     notifications: "Bildirishnomalar",
   }[page] || "CRM";
 }
@@ -1822,7 +1819,6 @@ function Sidebar({ profile, page, onNavigate, onLogout, unreadCount }) {
     { id: "team", label: "Xodimlar", icon: "◉" },
     { id: "shooting", label: "Syomka", icon: "◎" },
     { id: "meetings", label: "Uchrashuvlar", icon: "◷" },
-    { id: "chat", label: "Chat", icon: "◯" },
     { id: "notifications", label: "Bildirishnomalar", badge: unreadCount, icon: "◌" },
     ...(canViewReports(profile.role) ? [{ id: "reports", label: "Hisobotlar", icon: "◈" }] : []),
     { id: "workflow", label: "Workflow", icon: "⋯" },
@@ -3454,196 +3450,6 @@ function WorkflowPage() {
   );
 }
 
-const ChatPage = memo(function ChatPage({ profile, employees, messages, onSendMessage, onEditMessage, onMarkRead, onLoadOlder, hasMore, loadingOlder, loading }) {
-  const [input, setInput] = useState("");
-  const [editingId, setEditingId] = useState("");
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [isAtBottom, setIsAtBottom] = useState(true);
-  const viewportRef = useRef(null);
-  const endRef = useRef(null);
-  const sortedMessages = useMemo(() => sortByRecent(messages, "createdAt").reverse(), [messages]);
-  const employeeMap = useMemo(() => Object.fromEntries(employees.map((employee) => [employee.id, employee])), [employees]);
-  const quickReactions = ["👍", "🔥", "✅", "👏", "🎯", "🚀", "💡", "📌"];
-
-  useEffect(() => {
-    onMarkRead?.();
-  }, [messages.length, profile.uid]);
-
-  useEffect(() => {
-    if (!isAtBottom) return;
-    const frame = window.requestAnimationFrame(() => {
-      endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [sortedMessages, isAtBottom]);
-
-  function handleScroll() {
-    if (!viewportRef.current) return;
-    const distance = viewportRef.current.scrollHeight - viewportRef.current.scrollTop - viewportRef.current.clientHeight;
-    setIsAtBottom(distance < 80);
-  }
-
-  function insertEmoji(emoji) {
-    setInput((prev) => `${prev}${emoji}`);
-  }
-
-  function send() {
-    const text = input.trim();
-    if (!text) return;
-    if (editingId) {
-      onEditMessage?.(editingId, text);
-      setEditingId("");
-    } else {
-      onSendMessage(text);
-    }
-    setInput("");
-    setShowEmojiPicker(false);
-    setIsAtBottom(true);
-  }
-
-  return (
-    <div>
-      <PageHeader title="Umumiy chat" subtitle="Realtime jamoa chat. Xabarlar Firestore orqali barcha foydalanuvchilarga darhol sinxronlanadi." />
-      <Card style={{ padding: 0, display: "flex", flexDirection: "column", height: "calc(100vh - 200px)", minHeight: 420, overflow: "hidden" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "16px 18px", borderBottom: `1px solid ${T.colors.border}` }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 700 }}>Jamoa xabarlari</div>
-            <div style={{ marginTop: 2, color: T.colors.textSecondary, fontSize: 12 }}>{employees.length} foydalanuvchi · {sortedMessages.length} ta xabar</div>
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <span style={{ background: T.colors.borderLight, borderRadius: T.radius.full, padding: "6px 10px", fontSize: 12, color: T.colors.textSecondary }}>⚡ Realtime</span>
-            <span style={{ background: T.colors.borderLight, borderRadius: T.radius.full, padding: "6px 10px", fontSize: 12, color: T.colors.textSecondary }}>🙂 Emoji</span>
-          </div>
-        </div>
-
-        <div ref={viewportRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: T.space.xl, display: "flex", flexDirection: "column", gap: 14, background: "linear-gradient(180deg, #ffffff 0%, #fafafe 100%)" }}>
-          {hasMore ? (
-            <div style={{ display: "flex", justifyContent: "center" }}>
-              <Button variant="secondary" onClick={onLoadOlder} disabled={loadingOlder} style={{ padding: "8px 14px" }}>
-                {loadingOlder ? "Eski xabarlar yuklanmoqda..." : "Eski xabarlarni ko'rsatish"}
-              </Button>
-            </div>
-          ) : null}
-          {loading ? (
-            <div style={{ display: "grid", gap: 12 }}>
-              {Array.from({ length: 8 }).map((_, index) => (
-                <div key={index} style={{ display: "flex", justifyContent: index % 2 ? "flex-end" : "flex-start" }}>
-                  <SkeletonBlock width={index % 2 ? "42%" : "58%"} height={52} radius={16} />
-                </div>
-              ))}
-            </div>
-          ) : sortedMessages.length ? (
-            sortedMessages.map((message) => {
-              const author = employeeMap[message.userId] || { name: message.authorName || "Noma'lum" };
-              const mine = message.userId === profile.uid;
-              const seenByOthers = Object.keys(message.readBy || {}).some((userId) => userId !== message.userId);
-              return (
-                <div key={message.id} style={{ display: "flex", gap: 10, alignItems: "flex-end", justifyContent: mine ? "flex-end" : "flex-start", flexDirection: mine ? "row-reverse" : "row" }}>
-                  {!mine ? <Avatar name={author.name} url={author.avatarUrl} size={30} /> : null}
-                  <div style={{ maxWidth: "70%" }}>
-                    {!mine ? <div style={{ fontSize: 11, color: T.colors.textSecondary, marginBottom: 4, fontWeight: 700 }}>{author.name}</div> : null}
-                    <div
-                      style={{
-                        background: mine ? T.colors.accent : T.colors.bg,
-                        color: mine ? "#fff" : T.colors.text,
-                        padding: "12px 14px",
-                        borderRadius: mine ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
-                        lineHeight: 1.6,
-                        boxShadow: mine ? "0 10px 24px rgba(0,113,227,0.16)" : "none",
-                        whiteSpace: "pre-wrap",
-                        opacity: message.status === "sending" ? 0.72 : 1,
-                        border: message.status === "failed" ? `1px solid ${T.colors.red}` : "none",
-                      }}
-                    >
-                      {message.text}
-                    </div>
-                    <div style={{ marginTop: 4, display: "flex", alignItems: "center", justifyContent: mine ? "flex-end" : "flex-start", gap: 8 }}>
-                      <div style={{ fontSize: 10, color: T.colors.textTertiary, textAlign: mine ? "right" : "left", display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        {String(message.createdAt || "").slice(0, 16).replace("T", " ")}
-                        {message.editedAt ? <span>Tahrirlangan</span> : null}
-                        {mine ? <span>{message.status === "failed" ? "Yuborilmadi" : message.status === "sending" ? "Yuborilmoqda" : seenByOthers ? "Ko'rildi" : "Yuborildi"}</span> : null}
-                      </div>
-                      <div style={{ display: "inline-flex", gap: 4 }}>
-                        {quickReactions.slice(0, 2).map((emoji) => (
-                          <button
-                            key={`${message.id}_${emoji}`}
-                            type="button"
-                            onClick={() => insertEmoji(emoji)}
-                            style={{ border: "none", background: T.colors.borderLight, borderRadius: T.radius.full, width: 22, height: 22, cursor: "pointer", fontSize: 11 }}
-                          >
-                            {emoji}
-                          </button>
-                        ))}
-                        {mine ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingId(message.id);
-                              setInput(message.text);
-                            }}
-                            style={{ border: "none", background: "transparent", color: T.colors.textTertiary, cursor: "pointer", fontSize: 11, padding: "0 2px" }}
-                          >
-                            Tahrirlash
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          ) : (
-            <div style={{ color: T.colors.textMuted }}>Chat hali bo'sh.</div>
-          )}
-          <div ref={endRef} />
-        </div>
-
-        <div style={{ borderTop: `1px solid ${T.colors.border}`, padding: 16, display: "flex", gap: 10, flexWrap: "wrap", background: T.colors.surface, position: "relative" }}>
-          {showEmojiPicker ? <EmojiPicker onSelect={insertEmoji} onClose={() => setShowEmojiPicker(false)} /> : null}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", width: "100%" }}>
-            {quickReactions.map((emoji) => (
-              <button
-                key={emoji}
-                type="button"
-                onClick={() => insertEmoji(emoji)}
-                style={{
-                  border: "none",
-                  borderRadius: T.radius.full,
-                  background: T.colors.borderLight,
-                  padding: "6px 10px",
-                  cursor: "pointer",
-                  fontSize: 13,
-                }}
-              >
-                {emoji}
-              </button>
-            ))}
-          </div>
-          <textarea
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                send();
-              }
-            }}
-            placeholder={editingId ? "Xabarni tahrirlash..." : "Xabar yozing... (Enter yuboradi)"}
-            style={{ flex: 1, minHeight: 44, maxHeight: 140, resize: "vertical", border: `1.5px solid ${editingId ? T.colors.accent : T.colors.border}`, borderRadius: T.radius.lg, padding: "10px 14px", fontFamily: T.font, fontSize: 14, background: T.colors.bg }}
-          />
-          <div style={{ display: "flex", gap: 8, alignSelf: "flex-end" }}>
-            <Button variant="secondary" onClick={() => setShowEmojiPicker((prev) => !prev)} style={{ padding: "10px 12px" }}>
-              🙂
-            </Button>
-            {editingId ? <Button variant="secondary" onClick={() => { setEditingId(""); setInput(""); }} style={{ alignSelf: "flex-end", padding: "10px 12px" }}>Bekor</Button> : null}
-            <Button onClick={send} style={{ alignSelf: "flex-end", padding: "10px 18px" }}>{editingId ? "Saqlash" : "Yuborish"}</Button>
-          </div>
-        </div>
-      </Card>
-    </div>
-  );
-});
-
 function NotificationsPage({ notifications, profile, onMarkAllRead }) {
   const unread = notifications.filter((item) => !item.readBy?.[profile.uid]);
   const sorted = sortByRecent(notifications, "createdAt");
@@ -3755,8 +3561,6 @@ function AppShell() {
   const initialMeetings = [];
   const initialNotifications = [];
   const initialAuditDocs = [];
-  const initialChatMessages = [];
-
   const [profile, setProfile] = useState(null);
   const [projectDocs, setProjectDocs] = useState(initialProjects);
   const [publicUsers, setPublicUsers] = useState(initialPublicUsers);
@@ -3766,7 +3570,6 @@ function AppShell() {
   const [meetingDocs, setMeetingDocs] = useState(initialMeetings);
   const [notificationDocs, setNotificationDocs] = useState(initialNotifications);
   const [auditDocs, setAuditDocs] = useState(initialAuditDocs);
-  const [chatMessages, setChatMessages] = useState(initialChatMessages);
   const [selectedProjectWorkspace, setSelectedProjectWorkspace] = useState(EMPTY_PROJECT_WORKSPACE);
   const [page, setPage] = useState("dashboard");
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -3775,10 +3578,7 @@ function AppShell() {
   const [publicUsersReady, setPublicUsersReady] = useState(initialPublicUsers.length > 0);
   const [privateUsersReady, setPrivateUsersReady] = useState(Object.keys(initialPrivateUsers).length > 0);
   const [projectWorkspaceReady, setProjectWorkspaceReady] = useState(true);
-  const [chatReady, setChatReady] = useState(initialChatMessages.length > 0);
   const [bootSettled, setBootSettled] = useState(initialProjects.length > 0 || initialPublicUsers.length > 0);
-  const [chatHasMore, setChatHasMore] = useState(initialChatMessages.length >= 60);
-  const [chatLoadingOlder, setChatLoadingOlder] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
   const [migrationReady, setMigrationReady] = useState(!ENABLE_RUNTIME_MIGRATION);
@@ -3789,7 +3589,6 @@ function AppShell() {
   const projectDocsRef = useRef([]);
   const publicUsersRef = useRef([]);
   const selectedProjectRef = useRef(null);
-  const chatCursorRef = useRef(null);
 
   const legacyRootRef = hasFirebaseConfig && db ? doc(db, "crm", ROOT_DOC_ID) : null;
   const migrationMetaRef = hasFirebaseConfig && db ? doc(db, "crmMeta", ROOT_DOC_ID) : null;
@@ -3800,7 +3599,6 @@ function AppShell() {
   const meetingsCollectionRef = hasFirebaseConfig && db ? collection(db, "meetings") : null;
   const notificationsCollectionRef = hasFirebaseConfig && db ? collection(db, "notifications") : null;
   const auditLogsCollectionRef = hasFirebaseConfig && db ? collection(db, "auditLogs") : null;
-  const chatCollectionRef = hasFirebaseConfig && db ? collection(db, "chatMessages") : null;
 
   function pushToast(text, tone = "success") {
     if (!text) return;
@@ -3860,15 +3658,11 @@ function AppShell() {
           setMeetingDocs([]);
           setNotificationDocs([]);
           setAuditDocs([]);
-          setChatMessages([]);
           setSelectedProjectWorkspace(EMPTY_PROJECT_WORKSPACE);
           setProjectsReady(false);
           setPublicUsersReady(false);
           setPrivateUsersReady(false);
           setProjectWorkspaceReady(false);
-          setChatReady(false);
-          setChatHasMore(false);
-          chatCursorRef.current = null;
           migrationRef.current = false;
           setMigrationReady(!ENABLE_RUNTIME_MIGRATION);
           setBootSettled(false);
@@ -4227,35 +4021,6 @@ function AppShell() {
   }, [profile?.uid, selectedProjectId, migrationReady]);
 
   useEffect(() => {
-    if (!profile || !chatCollectionRef || !migrationReady) return undefined;
-    if (!chatMessages.length) setChatReady(false);
-    const unsubscribe = onSnapshot(
-      query(chatCollectionRef, orderBy("createdAt"), limitToLast(60)),
-      (snapshot) => {
-        const liveMessages = snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
-        const oldestLiveDoc = snapshot.docs[0] || null;
-        const oldestLiveCreatedAt = liveMessages[0]?.createdAt || "";
-        startTransition(() => {
-          setChatMessages((current) => {
-            const olderMessages = current.filter((message) => oldestLiveCreatedAt && String(message.createdAt || "") < String(oldestLiveCreatedAt));
-            const merged = [...olderMessages, ...liveMessages];
-            return Object.values(indexById(merged)).sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
-          });
-          chatCursorRef.current = oldestLiveDoc;
-          setChatHasMore((prev) => liveMessages.length >= 60 || prev);
-          setChatReady(true);
-        });
-      },
-      (error) => {
-        console.error('[CRM] chat onSnapshot error:', error?.code, error?.message);
-        setChatReady(true);
-        setAuthError(humanizeAuthError(error));
-      }
-    );
-    return () => unsubscribe();
-  }, [profile?.uid, chatCollectionRef, migrationReady]);
-
-  useEffect(() => {
     if (migrationReady && (projectsReady || publicUsersReady || legacyFallback.projects.length > 0 || legacyFallback.publicUsers.length > 0)) {
       setBootSettled(true);
     }
@@ -4289,14 +4054,6 @@ function AppShell() {
     return () => clearTimeout(timer);
   }, [profile?.uid, projectDocs, publicUsers, privateUsers, shootDocs, meetingDocs, notificationDocs, auditDocs]);
 
-  useEffect(() => {
-    if (!profile || !chatReady) return undefined;
-    const timer = setTimeout(() => {
-      writeCache(userScopedCacheKey(CHAT_CACHE_KEY, profile.uid), chatMessages.slice(-160));
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [profile?.uid, chatMessages, chatReady]);
-
   const effectiveProjectDocs = useMemo(
     () => (projectDocs.length ? projectDocs : legacyFallback.projects),
     [projectDocs, legacyFallback.projects]
@@ -4317,7 +4074,6 @@ function AppShell() {
   const crmReady = migrationReady && (projectsReady || effectiveProjectDocs.length > 0) && usersReady;
   const primaryLoading = !bootSettled && !crmReady && migrationReady && effectiveProjectDocs.length === 0 && effectivePublicUsers.length === 0;
   const teamLoading = !bootSettled && !teamReady && effectivePublicUsers.length === 0;
-  const chatPageLoading = !bootSettled && !chatReady && chatMessages.length === 0;
   const employees = useMemo(
     () => visibleEmployees(profile, mergeEmployeeDocs(effectivePublicUsers, privateUsers, profile?.role, effectiveProjectDocs), effectiveProjectDocs),
     [profile, effectivePublicUsers, privateUsers, effectiveProjectDocs]
@@ -4798,122 +4554,6 @@ function AppShell() {
     }
   }
 
-  async function loadOlderMessages() {
-    const cursor = chatCursorRef.current;
-    if (!chatCollectionRef || !cursor || chatLoadingOlder) return;
-    setChatLoadingOlder(true);
-    try {
-      // FIX: Use asc + endBefore instead of desc + startAfter to get older messages
-      const snapshot = await getDocs(
-        query(chatCollectionRef, orderBy("createdAt", "asc"), endBefore(cursor), limitToLast(40))
-      );
-      const olderMessages = snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
-      startTransition(() => {
-        setChatMessages((current) => {
-          const merged = [...olderMessages, ...current];
-          return Object.values(indexById(merged)).sort((a, b) =>
-            String(a.createdAt || "").localeCompare(String(b.createdAt || ""))
-          );
-        });
-        if (olderMessages.length) {
-          chatCursorRef.current = snapshot.docs[0] || cursor;
-        }
-        setChatHasMore(snapshot.size === 40);
-      });
-    } catch (error) {
-      setAuthError(humanizeAuthError(error));
-    } finally {
-      setChatLoadingOlder(false);
-    }
-  }
-
-  async function sendChatMessage(text) {
-    if (!chatCollectionRef || !profile) return;
-    const clientCreatedAt = isoNow();
-    const message = {
-      id: makeId("chat"),
-      userId: profile.uid,
-      authorName: profile.name,
-      text,
-      createdAt: clientCreatedAt,
-      clientCreatedAt,
-      editedAt: null,
-      readBy: { [profile.uid]: true },
-      status: "sending",
-    };
-    startTransition(() => {
-      setChatMessages((current) =>
-        Object.values(indexById([...current, message])).sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")))
-      );
-    });
-    try {
-      const { status: _s, ...messageToStore } = message;
-      await setDoc(
-        doc(db, "chatMessages", message.id),
-        { ...messageToStore, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), status: "sent" },
-        { merge: false }
-      );
-      startTransition(() => {
-        setChatMessages((current) =>
-          current.map((item) => (item.id === message.id ? { ...item, status: "sent" } : item))
-        );
-      });
-    } catch (error) {
-      startTransition(() => {
-        setChatMessages((current) =>
-          current.map((item) => (item.id === message.id ? { ...item, status: "failed" } : item))
-        );
-      });
-      setAuthError(humanizeAuthError(error));
-      pushToast(humanizeAuthError(error), "error");
-    }
-  }
-
-  async function editChatMessage(messageId, text) {
-    if (!chatCollectionRef || !profile) return;
-    const nextEditedAt = isoNow();
-    startTransition(() => {
-      setChatMessages((current) =>
-        current.map((message) => (message.id === messageId ? { ...message, text, editedAt: nextEditedAt } : message))
-      );
-    });
-    try {
-      await setDoc(doc(db, "chatMessages", messageId), { text, editedAt: serverTimestamp(), updatedAt: serverTimestamp(), status: "sent" }, { merge: true });
-    } catch (error) {
-      setAuthError(humanizeAuthError(error));
-      pushToast(humanizeAuthError(error), "error");
-    }
-  }
-
-  async function markChatMessagesRead() {
-    if (!chatCollectionRef || !profile) return;
-    const unread = chatMessages.filter((message) => message.userId !== profile.uid && !message.readBy?.[profile.uid]).slice(-30);
-    if (!unread.length) return;
-    startTransition(() => {
-      setChatMessages((current) =>
-        current.map((message) =>
-          unread.some((item) => item.id === message.id)
-            ? { ...message, readBy: { ...(message.readBy || {}), [profile.uid]: true } }
-            : message
-        )
-      );
-    });
-    try {
-      await commitBatchOperations(
-        db,
-        unread.map((message) => ({
-          type: "set",
-          ref: doc(db, "chatMessages", message.id),
-          data: { readBy: { ...(message.readBy || {}), [profile.uid]: true } },
-          options: { merge: true },
-        }))
-      );
-    } catch (error) {
-      setAuthError(humanizeAuthError(error));
-      pushToast(humanizeAuthError(error), "error");
-    }
-  }
-
   if (!hasFirebaseConfig) {
     return <SetupScreen />;
   }
@@ -5006,7 +4646,6 @@ function AppShell() {
 
           {page === "shooting" ? <ShootingPage profile={profile} shoots={shoots} projects={projects} employees={employees} onSaveShoot={saveShoot} onDeleteShoot={deleteShoot} /> : null}
           {page === "meetings" ? <MeetingsPage profile={profile} meetings={meetingDocs} employees={employees} onAddMeeting={addMeeting} onDeleteMeeting={deleteMeeting} /> : null}
-          {page === "chat" ? <ChatPage profile={profile} employees={employees} messages={chatMessages} onSendMessage={sendChatMessage} onEditMessage={editChatMessage} onMarkRead={markChatMessagesRead} onLoadOlder={loadOlderMessages} hasMore={chatHasMore} loadingOlder={chatLoadingOlder} loading={chatPageLoading} /> : null}
           {page === "notifications" ? <NotificationsPage notifications={notificationDocs} profile={profile} onMarkAllRead={markAllNotificationsRead} /> : null}
           {page === "reports" && canViewReports(profile.role) ? <ReportsPage projects={projects} /> : null}
           {page === "workflow" ? <WorkflowPage /> : null}
