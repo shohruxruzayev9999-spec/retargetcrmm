@@ -6,7 +6,7 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
-import { collection, doc, endBefore, getDoc, getDocs, limit, limitToLast, onSnapshot, orderBy, query, setDoc, writeBatch } from "firebase/firestore";
+import { Timestamp, collection, doc, endBefore, getDoc, getDocs, limit, limitToLast, onSnapshot, orderBy, query, serverTimestamp, setDoc, writeBatch } from "firebase/firestore";
 import { auth, db, googleProvider, hasFirebaseConfig } from "./firebase";
 
 const T = {
@@ -176,8 +176,38 @@ function writeCache(key, value) {
   }
 }
 
-function projectWorkspaceCacheKey(projectId) {
-  return `${CRM_CACHE_KEY}:project:${projectId}`;
+function clearCache(key) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Ignore cache cleanup failures.
+  }
+}
+
+function userScopedCacheKey(baseKey, userId) {
+  return `${baseKey}:v${SCHEMA_VERSION}:${userId || "anon"}`;
+}
+
+function projectWorkspaceCacheKey(userId, projectId) {
+  return `${userScopedCacheKey(CRM_CACHE_KEY, userId)}:project:${projectId}`;
+}
+
+function clearUserCaches(userId, projectIds = []) {
+  if (!userId) return;
+  clearCache(userScopedCacheKey(CRM_CACHE_KEY, userId));
+  clearCache(userScopedCacheKey(CHAT_CACHE_KEY, userId));
+  projectIds.forEach((projectId) => clearCache(projectWorkspaceCacheKey(userId, projectId)));
+}
+
+function normalizeDateValue(value, fallback = null) {
+  if (!value) return fallback;
+  if (typeof value === "string") return value;
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Timestamp) return value.toDate().toISOString();
+  if (typeof value?.toDate === "function") return value.toDate().toISOString();
+  if (typeof value?.seconds === "number") return new Date(value.seconds * 1000).toISOString();
+  return fallback;
 }
 
 function indexById(items) {
@@ -233,9 +263,9 @@ function normalizeProject(project) {
       progress: Number(project.metrics?.progress || 0),
     },
     memberStats: project.memberStats && typeof project.memberStats === "object" ? project.memberStats : {},
-    createdAt: project.createdAt || null,
+    createdAt: normalizeDateValue(project.createdAt, null),
     createdBy: project.createdBy || "",
-    updatedAt: project.updatedAt || null,
+    updatedAt: normalizeDateValue(project.updatedAt, null),
     updatedBy: project.updatedBy || "",
   };
 }
@@ -488,7 +518,11 @@ function projectMembers(project, employees) {
 function visibleProjects(profile, projects) {
   if (!profile) return [];
   if (profile.role === "EMPLOYEE") {
-    return projects.filter((project) => !project.archived && (project.teamIds.includes(profile.uid) || project.managerId === profile.uid));
+    return projects.filter(
+      (project) =>
+        !project.archived &&
+        (project.visibility === "company" || project.teamIds.includes(profile.uid) || project.managerId === profile.uid)
+    );
   }
   return projects.filter((project) => !project.archived);
 }
@@ -697,8 +731,8 @@ function normalizeStoredUser(id, data) {
     dept: data.dept || ROLE_META[data.roleCode || data.role]?.dept || "SMM bo'limi",
     status: data.status || "active",
     assignedProjectIds: Array.isArray(data.assignedProjectIds) ? data.assignedProjectIds : [],
-    createdAt: data.createdAt || isoNow(),
-    updatedAt: data.updatedAt || isoNow(),
+    createdAt: normalizeDateValue(data.createdAt, isoNow()),
+    updatedAt: normalizeDateValue(data.updatedAt, isoNow()),
   };
 }
 
@@ -708,7 +742,7 @@ function normalizeStoredPrivateUser(id, data) {
     salary: Number(data.salary || 0),
     kpiBase: Number(data.kpiBase || 80),
     load: Number(data.load || 0),
-    updatedAt: data.updatedAt || isoNow(),
+    updatedAt: normalizeDateValue(data.updatedAt, isoNow()),
   };
 }
 
@@ -716,6 +750,9 @@ function normalizeStoredRecord(id, data) {
   return {
     id,
     ...data,
+    createdAt: normalizeDateValue(data.createdAt, normalizeDateValue(data.clientCreatedAt, isoNow())),
+    updatedAt: normalizeDateValue(data.updatedAt, normalizeDateValue(data.createdAt, isoNow())),
+    editedAt: normalizeDateValue(data.editedAt, null),
     comments: normalizeComments(data.comments),
   };
 }
@@ -3635,18 +3672,14 @@ export default function App() {
 }
 
 function AppShell() {
-  const cachedCrm = readCache(CRM_CACHE_KEY, {});
-  const cachedChat = readCache(CHAT_CACHE_KEY, []);
-  const initialProjects = Array.isArray(cachedCrm.projects) ? cachedCrm.projects.map((item) => normalizeStoredProjectMeta(item.id, item)).filter((project) => !project.archived) : [];
-  const initialPublicUsers = Array.isArray(cachedCrm.users) ? cachedCrm.users.map((item) => normalizeStoredUser(item.id, item)) : [];
-  const initialPrivateUsers = cachedCrm.userPrivate && typeof cachedCrm.userPrivate === "object"
-    ? Object.fromEntries(Object.entries(cachedCrm.userPrivate).map(([id, item]) => [id, normalizeStoredPrivateUser(id, item)]))
-    : {};
-  const initialShoots = Array.isArray(cachedCrm.shoots) ? cachedCrm.shoots.map((item) => normalizeStoredRecord(item.id, item)) : [];
-  const initialMeetings = Array.isArray(cachedCrm.meetings) ? cachedCrm.meetings.map((item) => normalizeStoredRecord(item.id, item)) : [];
-  const initialNotifications = Array.isArray(cachedCrm.notifications) ? cachedCrm.notifications.map((item) => normalizeStoredRecord(item.id, item)) : [];
-  const initialAuditDocs = Array.isArray(cachedCrm.auditLog) ? cachedCrm.auditLog.map((item) => normalizeStoredRecord(item.id, item)) : [];
-  const initialChatMessages = Array.isArray(cachedChat) ? cachedChat : [];
+  const initialProjects = [];
+  const initialPublicUsers = [];
+  const initialPrivateUsers = {};
+  const initialShoots = [];
+  const initialMeetings = [];
+  const initialNotifications = [];
+  const initialAuditDocs = [];
+  const initialChatMessages = [];
 
   const [profile, setProfile] = useState(null);
   const [projectDocs, setProjectDocs] = useState(initialProjects);
@@ -3669,7 +3702,6 @@ function AppShell() {
   const [bootSettled, setBootSettled] = useState(initialProjects.length > 0 || initialPublicUsers.length > 0);
   const [chatHasMore, setChatHasMore] = useState(initialChatMessages.length >= 60);
   const [chatLoadingOlder, setChatLoadingOlder] = useState(false);
-  const [chatCursor, setChatCursor] = useState(initialChatMessages[0]?.createdAt || "");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -3679,8 +3711,7 @@ function AppShell() {
   const projectDocsRef = useRef([]);
   const publicUsersRef = useRef([]);
   const selectedProjectRef = useRef(null);
-  const chatCursorRef = useRef("");
-  const initialCacheRef = useRef(cachedCrm);
+  const chatCursorRef = useRef(null);
 
   const legacyRootRef = hasFirebaseConfig && db ? doc(db, "crm", ROOT_DOC_ID) : null;
   const projectsCollectionRef = hasFirebaseConfig && db ? collection(db, "projects") : null;
@@ -3694,12 +3725,6 @@ function AppShell() {
 
   function pushToast(text, tone = "success") {
     if (!text) return;
-    const msg = String(text).toLowerCase();
-    // Suppress Firestore config/permission errors from toast — show in console only
-    if (tone === "error" && (msg.includes("ruxsat") || msg.includes("permission") || msg.includes("unavailable"))) {
-      console.error("[CRM] suppressed toast:", text);
-      return;
-    }
     setToasts((current) => [...current.slice(-2), { id: makeId("toast"), text, tone }]);
   }
 
@@ -3763,7 +3788,7 @@ function AppShell() {
           setProjectWorkspaceReady(false);
           setChatReady(false);
           setChatHasMore(false);
-          setChatCursor("");
+          chatCursorRef.current = null;
           migrationRef.current = false;
           setBooting(false);
           return;
@@ -3870,10 +3895,8 @@ function AppShell() {
       },
       (error) => {
         console.error('[CRM] projects onSnapshot error:', error?.code, error?.message);
-        setProjectsReady(true); // Always resolve skeleton even on error
-        if (!String(error?.code || '').includes('permission-denied')) {
-          setAuthError(humanizeAuthError(error));
-        }
+        setProjectsReady(true);
+        setAuthError(humanizeAuthError(error));
       }
     );
     return () => unsubscribe();
@@ -3895,9 +3918,7 @@ function AppShell() {
       (error) => {
         console.error('[CRM] users onSnapshot error:', error?.code, error?.message);
         setPublicUsersReady(true);
-        if (!String(error?.code || '').includes('permission-denied')) {
-          setAuthError(humanizeAuthError(error));
-        }
+        setAuthError(humanizeAuthError(error));
       }
     );
     return () => unsubscribe();
@@ -3926,6 +3947,7 @@ function AppShell() {
       (error) => {
         console.error('[CRM] privateUsers onSnapshot error:', error?.code, error?.message);
         setPrivateUsersReady(true);
+        setAuthError(humanizeAuthError(error));
       }
     );
     return () => unsubscribe();
@@ -3961,19 +3983,16 @@ function AppShell() {
 
   useEffect(() => {
     if (!profile || !notificationsCollectionRef) return undefined;
-    const cachedNotifications = Array.isArray(initialCacheRef.current.notifications) ? initialCacheRef.current.notifications : [];
-    if (cachedNotifications.length) {
-      startTransition(() => {
-        setNotificationDocs(cachedNotifications.map((item) => normalizeStoredRecord(item.id, item)));
-      });
-    }
     const unsubscribe = onSnapshot(
       notificationsCollectionRef,
       (snapshot) => {
         const nextNotifications = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "createdAt").slice(0, 120);
         startTransition(() => setNotificationDocs(nextNotifications));
       },
-      (error) => { /* silent */ }
+      (error) => {
+        console.error("[CRM] notifications onSnapshot error:", error?.code, error?.message);
+        setAuthError(humanizeAuthError(error));
+      }
     );
     return () => unsubscribe();
   }, [profile?.uid, notificationsCollectionRef]);
@@ -3987,7 +4006,10 @@ function AppShell() {
         const nextAuditDocs = sortByRecent(snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())), "createdAt").slice(0, 180);
         startTransition(() => setAuditDocs(nextAuditDocs));
       },
-      (error) => { /* silent */ }
+      (error) => {
+        console.error("[CRM] auditLogs onSnapshot error:", error?.code, error?.message);
+        setAuthError(humanizeAuthError(error));
+      }
     );
     return () => unsubscribe();
   }, [profile?.uid, auditLogsCollectionRef, page]);
@@ -3999,21 +4021,8 @@ function AppShell() {
       return undefined;
     }
 
-    // FIX: Load cache immediately so there is no flash of empty workspace
-    const cachedWorkspace = readCache(projectWorkspaceCacheKey(selectedProjectId), null);
-    if (cachedWorkspace) {
-      setSelectedProjectWorkspace({
-        tasks: Array.isArray(cachedWorkspace.tasks) ? cachedWorkspace.tasks : [],
-        contentPlan: Array.isArray(cachedWorkspace.contentPlan) ? cachedWorkspace.contentPlan : [],
-        mediaPlan: Array.isArray(cachedWorkspace.mediaPlan) ? cachedWorkspace.mediaPlan : [],
-        plans: cachedWorkspace.plans || { daily: [], weekly: [], monthly: [] },
-        calls: Array.isArray(cachedWorkspace.calls) ? cachedWorkspace.calls : [],
-      });
-      setProjectWorkspaceReady(true);
-    } else {
-      setSelectedProjectWorkspace(EMPTY_PROJECT_WORKSPACE);
-      setProjectWorkspaceReady(false);
-    }
+    setSelectedProjectWorkspace(EMPTY_PROJECT_WORKSPACE);
+    setProjectWorkspaceReady(false);
 
     const projectRef = doc(db, "projects", selectedProjectId);
 
@@ -4036,9 +4045,7 @@ function AppShell() {
         if (pendingPatch.calls !== null)       patch.calls       = pendingPatch.calls;
         startTransition(() => {
           setSelectedProjectWorkspace((current) => {
-            const next = { ...current, ...patch };
-            writeCache(projectWorkspaceCacheKey(projectIdSnapshot), next);
-            return next;
+            return { ...current, ...patch };
           });
           const allLoaded = ["tasks","contentPlan","mediaPlan","plans","calls"].every(k => loadedKeys.has(k));
           if (allLoaded) setProjectWorkspaceReady(true);
@@ -4088,19 +4095,12 @@ function AppShell() {
 
   useEffect(() => {
     if (!profile || !chatCollectionRef) return undefined;
-    if (page !== "chat") return undefined;
     if (!chatMessages.length) setChatReady(false);
-    if (chatMessages.length) {
-      const initialCursor = chatMessages[0]?.createdAt || "";
-      chatCursorRef.current = initialCursor;
-      if (!chatCursor) setChatCursor(initialCursor);
-      setChatHasMore(chatMessages.length >= 60);
-      setChatReady(true);
-    }
     const unsubscribe = onSnapshot(
       query(chatCollectionRef, orderBy("createdAt"), limitToLast(60)),
       (snapshot) => {
         const liveMessages = snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
+        const oldestLiveDoc = snapshot.docs[0] || null;
         const oldestLiveCreatedAt = liveMessages[0]?.createdAt || "";
         startTransition(() => {
           setChatMessages((current) => {
@@ -4108,39 +4108,19 @@ function AppShell() {
             const merged = [...olderMessages, ...liveMessages];
             return Object.values(indexById(merged)).sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
           });
-          setChatCursor((current) => {
-            const next = (current && oldestLiveCreatedAt)
-              ? (String(current) < String(oldestLiveCreatedAt) ? current : oldestLiveCreatedAt)
-              : (current || oldestLiveCreatedAt);
-            chatCursorRef.current = next;
-            return next;
-          });
+          chatCursorRef.current = oldestLiveDoc;
           setChatHasMore((prev) => liveMessages.length >= 60 || prev);
           setChatReady(true);
         });
       },
       (error) => {
         console.error('[CRM] chat onSnapshot error:', error?.code, error?.message);
-        setChatReady(true); // Always resolve skeleton
+        setChatReady(true);
+        setAuthError(humanizeAuthError(error));
       }
     );
     return () => unsubscribe();
-  }, [profile?.uid, chatCollectionRef, page]);
-
-  // One-shot 2s safety net per login — forces all skeletons to resolve.
-  // Deps = [profile?.uid] so it runs ONCE per session, not on every state change.
-  useEffect(() => {
-    if (!profile) return undefined;
-    const timeout = setTimeout(() => {
-      setProjectsReady(true);
-      setPublicUsersReady(true);
-      setPrivateUsersReady(true);
-      setChatReady(true);
-      setProjectWorkspaceReady(true);
-      setBootSettled(true);
-    }, 2000);
-    return () => clearTimeout(timeout);
-  }, [profile?.uid]);
+  }, [profile?.uid, chatCollectionRef]);
 
   useEffect(() => {
     if (projectsReady || publicUsersReady) {
@@ -4152,7 +4132,7 @@ function AppShell() {
   useEffect(() => {
     if (!profile) return undefined;
     const timer = setTimeout(() => {
-      writeCache(CRM_CACHE_KEY, {
+      writeCache(userScopedCacheKey(CRM_CACHE_KEY, profile.uid), {
         projects: projectDocs,
         users: publicUsers,
         userPrivate: privateUsers,
@@ -4168,7 +4148,7 @@ function AppShell() {
   useEffect(() => {
     if (!profile || !chatReady) return undefined;
     const timer = setTimeout(() => {
-      writeCache(CHAT_CACHE_KEY, chatMessages.slice(-160));
+      writeCache(userScopedCacheKey(CHAT_CACHE_KEY, profile.uid), chatMessages.slice(-160));
     }, 400);
     return () => clearTimeout(timer);
   }, [profile?.uid, chatMessages, chatReady]);
@@ -4301,6 +4281,9 @@ function AppShell() {
   }
 
   async function handleLogout() {
+    if (profile?.uid) {
+      clearUserCaches(profile.uid, projectDocsRef.current.map((project) => project.id));
+    }
     await signOut(auth);
     setPage("dashboard");
     setSelectedProjectId("");
@@ -4411,21 +4394,6 @@ function AppShell() {
       await commitBatchOperations(db, operations);
       if (meta.toastText || meta.notifyText) pushToast(meta.toastText || meta.notifyText);
     } catch (error) {
-      // On permission-denied, revert optimistic update by re-fetching from cache
-      if (String(error?.code || '').includes('permission-denied')) {
-        const cachedWs = readCache(projectWorkspaceCacheKey(nextProject.id), null);
-        if (cachedWs && selectedProjectId === nextProject.id) {
-          startTransition(() => {
-            setSelectedProjectWorkspace({
-              tasks: Array.isArray(cachedWs.tasks) ? cachedWs.tasks : [],
-              contentPlan: Array.isArray(cachedWs.contentPlan) ? cachedWs.contentPlan : [],
-              mediaPlan: Array.isArray(cachedWs.mediaPlan) ? cachedWs.mediaPlan : [],
-              plans: cachedWs.plans || { daily: [], weekly: [], monthly: [] },
-              calls: Array.isArray(cachedWs.calls) ? cachedWs.calls : [],
-            });
-          });
-        }
-      }
       setAuthError(humanizeAuthError(error));
       pushToast(humanizeAuthError(error), "error");
     } finally {
@@ -4680,9 +4648,7 @@ function AppShell() {
           );
         });
         if (olderMessages.length) {
-          const newCursor = olderMessages[0].createdAt || cursor;
-          chatCursorRef.current = newCursor;
-          setChatCursor(newCursor);
+          chatCursorRef.current = snapshot.docs[0] || cursor;
         }
         setChatHasMore(snapshot.size === 40);
       });
@@ -4695,12 +4661,14 @@ function AppShell() {
 
   async function sendChatMessage(text) {
     if (!chatCollectionRef || !profile) return;
+    const clientCreatedAt = isoNow();
     const message = {
       id: makeId("chat"),
       userId: profile.uid,
       authorName: profile.name,
       text,
-      createdAt: isoNow(),
+      createdAt: clientCreatedAt,
+      clientCreatedAt,
       editedAt: null,
       readBy: { [profile.uid]: true },
       status: "sending",
@@ -4712,7 +4680,11 @@ function AppShell() {
     });
     try {
       const { status: _s, ...messageToStore } = message;
-      await setDoc(doc(db, "chatMessages", message.id), { ...messageToStore, status: "sent" }, { merge: false });
+      await setDoc(
+        doc(db, "chatMessages", message.id),
+        { ...messageToStore, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), status: "sent" },
+        { merge: false }
+      );
       startTransition(() => {
         setChatMessages((current) =>
           current.map((item) => (item.id === message.id ? { ...item, status: "sent" } : item))
@@ -4724,10 +4696,7 @@ function AppShell() {
           current.map((item) => (item.id === message.id ? { ...item, status: "failed" } : item))
         );
       });
-      // Don't show permission-denied as top-level error for chat
-      if (!String(error?.code || '').includes('permission-denied')) {
-        setAuthError(humanizeAuthError(error));
-      }
+      setAuthError(humanizeAuthError(error));
       pushToast(humanizeAuthError(error), "error");
     }
   }
@@ -4741,7 +4710,7 @@ function AppShell() {
       );
     });
     try {
-      await setDoc(doc(db, "chatMessages", messageId), { text, editedAt: nextEditedAt, status: "sent" }, { merge: true });
+      await setDoc(doc(db, "chatMessages", messageId), { text, editedAt: serverTimestamp(), updatedAt: serverTimestamp(), status: "sent" }, { merge: true });
     } catch (error) {
       setAuthError(humanizeAuthError(error));
       pushToast(humanizeAuthError(error), "error");
@@ -4772,8 +4741,8 @@ function AppShell() {
         }))
       );
     } catch (error) {
-      if (String(error?.code || "").includes("permission-denied")) return;
       setAuthError(humanizeAuthError(error));
+      pushToast(humanizeAuthError(error), "error");
     }
   }
 
@@ -4807,7 +4776,7 @@ function AppShell() {
         <Sidebar profile={profile} page={page} onNavigate={navigate} onLogout={handleLogout} unreadCount={unreadCount} />
 
         <main style={{ flex: 1, overflow: "auto", padding: "32px 36px", maxWidth: "calc(100% - 220px)" }}>
-          {authError && !authError.includes("ruxsat") && !authError.includes("permission") ? (
+          {authError ? (
             <div style={{ marginBottom: 14, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", padding: "12px 14px", borderRadius: T.radius.lg, fontSize: 13, fontWeight: 600 }}>
               {authError}
             </div>

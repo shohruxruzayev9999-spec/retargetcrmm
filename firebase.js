@@ -1,6 +1,6 @@
 import { initializeApp, getApps } from "firebase/app";
-import { browserLocalPersistence, getAuth, GoogleAuthProvider, setPersistence } from "firebase/auth";
-import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
+import { GoogleAuthProvider, browserLocalPersistence, getAuth, inMemoryPersistence, initializeAuth } from "firebase/auth";
+import { getFirestore, initializeFirestore, memoryLocalCache } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -19,21 +19,24 @@ let db = null;
 let googleProvider = null;
 
 if (hasFirebaseConfig) {
-  // FIX: Prevent duplicate initialization on HMR / React StrictMode double-invoke
   app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-  auth = getAuth(app);
   try {
-    db = initializeFirestore(app, {
-      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+    auth = initializeAuth(app, {
+      persistence: [browserLocalPersistence, inMemoryPersistence],
     });
   } catch {
-    // Already initialized (HMR) — safe fallback
+    auth = getAuth(app);
+  }
+  try {
+    db = initializeFirestore(app, {
+      localCache: memoryLocalCache(),
+    });
+  } catch {
     db = getFirestore(app);
   }
   googleProvider = new GoogleAuthProvider();
   googleProvider.addScope("profile");
   googleProvider.addScope("email");
-  setPersistence(auth, browserLocalPersistence).catch(() => {});
 }
 
 export { app, auth, db, googleProvider };
