@@ -371,7 +371,7 @@ function profileToPublicUser(profile) {
       roleCode: profile.role || "EMPLOYEE",
       role: profile.title || ROLE_META[profile.role]?.title || "Xodim",
       dept: profile.dept || ROLE_META[profile.role]?.dept || "SMM bo'limi",
-      assignedProjectIds: [],
+      assignedProjectIds: Array.isArray(profile.assignedProjectIds) ? profile.assignedProjectIds : [],
       createdAt: profile.createdAt || isoNow(),
       updatedAt: isoNow(),
       status: "active",
@@ -624,7 +624,8 @@ function canRunRuntimeMigration(role) {
 
 function isProjectMember(profile, project) {
   if (!profile || !project) return false;
-  return project.managerId === profile.uid || project.teamIds.includes(profile.uid);
+  const assignedProjectIds = Array.isArray(profile.assignedProjectIds) ? profile.assignedProjectIds : [];
+  return project.managerId === profile.uid || project.teamIds.includes(profile.uid) || assignedProjectIds.includes(project.id);
 }
 
 function canWorkInProject(profile, project) {
@@ -645,10 +646,11 @@ function projectMembers(project, employees) {
 function visibleProjects(profile, projects) {
   if (!profile) return [];
   if (profile.role === "EMPLOYEE") {
+    const assignedProjectIds = new Set(Array.isArray(profile.assignedProjectIds) ? profile.assignedProjectIds : []);
     return projects.filter(
       (project) =>
         !project.archived &&
-        (project.visibility === "company" || project.teamIds.includes(profile.uid) || project.managerId === profile.uid)
+        (project.visibility === "company" || project.teamIds.includes(profile.uid) || project.managerId === profile.uid || assignedProjectIds.has(project.id))
     );
   }
   return projects.filter((project) => !project.archived);
@@ -3770,6 +3772,7 @@ function AppShell() {
           role: roleCode,
           dept: nextUserDoc.dept,
           title: nextUserDoc.title,
+          assignedProjectIds: Array.isArray(nextUserDoc.assignedProjectIds) ? nextUserDoc.assignedProjectIds : [],
           salary: Number(privateSnapshot?.data()?.salary || 0),
           kpiBase: Number(privateSnapshot?.data()?.kpiBase || 80),
           load: Number(privateSnapshot?.data()?.load || 0),
@@ -3858,6 +3861,22 @@ function AppShell() {
         nextUsers.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
         startTransition(() => {
           setPublicUsers(nextUsers);
+          const currentUserDoc = nextUsers.find((item) => item.id === profile.uid);
+          if (currentUserDoc) {
+            setProfile((currentProfile) =>
+              currentProfile
+                ? {
+                    ...currentProfile,
+                    email: currentUserDoc.email || currentProfile.email,
+                    name: currentUserDoc.name || currentProfile.name,
+                    avatarUrl: currentUserDoc.avatarUrl || currentProfile.avatarUrl,
+                    dept: currentUserDoc.dept || currentProfile.dept,
+                    title: currentUserDoc.title || currentProfile.title,
+                    assignedProjectIds: Array.isArray(currentUserDoc.assignedProjectIds) ? currentUserDoc.assignedProjectIds : [],
+                  }
+                : currentProfile
+            );
+          }
           setPublicUsersReady(true);
         });
       },
