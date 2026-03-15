@@ -19,12 +19,22 @@ service cloud.firestore {
       return request.auth.uid;
     }
 
+    function currentUserRef() {
+      return /databases/$(database)/documents/users/$(uid());
+    }
+
+    function hasCurrentUserProfile() {
+      return signedIn() && exists(currentUserRef());
+    }
+
     function currentUserData() {
-      return get(/databases/$(database)/documents/users/$(uid())).data;
+      return hasCurrentUserProfile() ? get(currentUserRef()).data : null;
     }
 
     function currentRole() {
-      return signedIn() ? currentUserData().roleCode : "";
+      return currentUserData() != null && currentUserData().roleCode != null
+        ? currentUserData().roleCode
+        : "";
     }
 
     function isManagerRole() {
@@ -37,7 +47,7 @@ service cloud.firestore {
 
     // For single-doc project reads: use resource.data (no extra get() needed)
     function canGetProject(projectData) {
-      return signedIn() && (
+      return signedIn() && projectData != null && (
         isManagerRole() ||
         projectData.managerId == uid() ||
         (projectData.teamIds != null && uid() in projectData.teamIds) ||
@@ -47,12 +57,14 @@ service cloud.firestore {
 
     // For subcollection writes: need one parent get()
     function parentProjectData(projectId) {
-      return get(/databases/$(database)/documents/projects/$(projectId)).data;
+      return exists(/databases/$(database)/documents/projects/$(projectId))
+        ? get(/databases/$(database)/documents/projects/$(projectId)).data
+        : null;
     }
 
     function canWorkOnProject(projectId) {
       let p = parentProjectData(projectId);
-      return signedIn() && (
+      return signedIn() && p != null && (
         isManagerRole() ||
         p.managerId == uid() ||
         (p.teamIds != null && uid() in p.teamIds)
@@ -61,7 +73,7 @@ service cloud.firestore {
 
     function canReadSubcollection(projectId) {
       let p = parentProjectData(projectId);
-      return signedIn() && (
+      return signedIn() && p != null && (
         isManagerRole() ||
         p.managerId == uid() ||
         (p.teamIds != null && uid() in p.teamIds) ||
