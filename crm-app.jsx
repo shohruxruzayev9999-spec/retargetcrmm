@@ -378,6 +378,58 @@ function profileToPublicUser(profile) {
   );
 }
 
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function canonicalizeUsersAndProjects(users, projects, profile) {
+  const groupedUsers = new Map();
+  users.forEach((user) => {
+    const key = normalizeEmail(user.email) || `id:${user.id}`;
+    if (!groupedUsers.has(key)) groupedUsers.set(key, []);
+    groupedUsers.get(key).push(user);
+  });
+
+  const aliasMap = {};
+  const canonicalUsers = [];
+
+  groupedUsers.forEach((group) => {
+    const preferred =
+      group.find((user) => user.id === profile?.uid) ||
+      group.find((user) => user.status !== "merged") ||
+      group[0];
+    const mergedAssignedProjectIds = Array.from(
+      new Set(
+        group.flatMap((user) => (Array.isArray(user.assignedProjectIds) ? user.assignedProjectIds : []))
+      )
+    );
+    const canonicalUser = normalizeStoredUser(preferred.id, {
+      ...preferred,
+      assignedProjectIds: mergedAssignedProjectIds,
+    });
+    canonicalUsers.push(canonicalUser);
+    group.forEach((user) => {
+      aliasMap[user.id] = preferred.id;
+    });
+  });
+
+  const canonicalProjects = projects.map((project) => {
+    const managerId = aliasMap[project.managerId] || project.managerId;
+    const teamIds = Array.from(new Set((project.teamIds || []).map((teamId) => aliasMap[teamId] || teamId).filter(Boolean)));
+    if (managerId === project.managerId && recordsEqual(teamIds, project.teamIds || [])) return project;
+    return normalizeStoredProjectMeta(project.id, {
+      ...project,
+      managerId,
+      teamIds,
+    });
+  });
+
+  return {
+    users: canonicalUsers.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""))),
+    projects: canonicalProjects,
+  };
+}
+
 function buildLegacyFallback(payload, actor) {
   const legacy = normalizeCrmPayload(payload);
   const assignedProjectIdsMap = buildAssignedProjectIdsMap(legacy.projects);
@@ -3070,7 +3122,7 @@ const TeamPage = memo(function TeamPage({ profile, employees, projects, employee
                       </div>
                       <div style={{ marginTop: 12, display: "grid", gap: 6, fontSize: 12, color: T.colors.textSecondary }}>
                         <div>{employee.email || "Email ko'rsatilmagan"}</div>
-                        <div>{canViewCompensation ? (employee.salary ? `${toMoney(employee.salary)} so'm / oy` : "Oylik kiritilmagan") : "Oylik faqat CEO/Admin ga ko'rinadi"}</div>
+                        {canViewCompensation ? <div>{employee.salary ? `${toMoney(employee.salary)} so'm / oy` : "Oylik kiritilmagan"}</div> : null}
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           {projectAssignments.length ? projectAssignments.map((project) => (
                             <span key={project.id} style={{ background: T.colors.accentSoft, color: T.colors.accent, padding: "3px 8px", borderRadius: T.radius.full, fontSize: 11, fontWeight: 600 }}>
@@ -3565,7 +3617,6 @@ function AppShell() {
   const [projectDocs, setProjectDocs] = useState(initialProjects);
   const [publicUsers, setPublicUsers] = useState(initialPublicUsers);
   const [privateUsers, setPrivateUsers] = useState(initialPrivateUsers);
-  const [legacyFallback, setLegacyFallback] = useState(EMPTY_LEGACY_FALLBACK);
   const [shootDocs, setShootDocs] = useState(initialShoots);
   const [meetingDocs, setMeetingDocs] = useState(initialMeetings);
   const [notificationDocs, setNotificationDocs] = useState(initialNotifications);
@@ -3653,7 +3704,6 @@ function AppShell() {
           setProjectDocs([]);
           setPublicUsers([]);
           setPrivateUsers({});
-          setLegacyFallback(EMPTY_LEGACY_FALLBACK);
           setShootDocs([]);
           setMeetingDocs([]);
           setNotificationDocs([]);
@@ -3775,38 +3825,6 @@ function AppShell() {
       cancelled = true;
     };
   }, [profile?.uid, legacyRootRef, migrationMetaRef]);
-
-  useEffect(() => {
-    if (!profile || !legacyRootRef || !migrationReady) {
-      setLegacyFallback(EMPTY_LEGACY_FALLBACK);
-      return undefined;
-    }
-    if (projectDocs.length && publicUsers.length) {
-      setLegacyFallback(EMPTY_LEGACY_FALLBACK);
-      return undefined;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const snapshot = await getDoc(legacyRootRef);
-        if (cancelled) return;
-        if (!snapshot.exists()) {
-          setLegacyFallback(EMPTY_LEGACY_FALLBACK);
-          return;
-        }
-        const nextFallback = buildLegacyFallback(snapshot.data()?.payload, profile);
-        setLegacyFallback(nextFallback);
-        if ((nextFallback.projects.length > 0 || nextFallback.publicUsers.length > 0) && authError.startsWith("Realtime ma'lumotlar")) {
-          setAuthError("");
-        }
-      } catch (error) {
-        console.error("[CRM] legacy fallback error:", error?.code, error?.message);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [profile?.uid, legacyRootRef, migrationReady, projectDocs.length, publicUsers.length, authError]);
 
   useEffect(() => {
     if (!profile || !projectsCollectionRef || !migrationReady) return undefined;
@@ -4021,21 +4039,21 @@ function AppShell() {
   }, [profile?.uid, selectedProjectId, migrationReady]);
 
   useEffect(() => {
-    if (migrationReady && (projectsReady || publicUsersReady || legacyFallback.projects.length > 0 || legacyFallback.publicUsers.length > 0)) {
+    if (migrationReady && (projectsReady || publicUsersReady)) {
       setBootSettled(true);
     }
-  }, [projectsReady, publicUsersReady, migrationReady, legacyFallback.projects.length, legacyFallback.publicUsers.length]);
+  }, [projectsReady, publicUsersReady, migrationReady]);
 
   useEffect(() => {
     if (!profile || bootSettled || !migrationReady) return undefined;
     const timer = setTimeout(() => {
       setBootSettled(true);
-      if (!projectsReady && !publicUsersReady && legacyFallback.projects.length === 0 && legacyFallback.publicUsers.length === 0 && !authError) {
+      if (!projectsReady && !publicUsersReady && !authError) {
         setAuthError("Realtime ma'lumotlar serverdan kechikib kelmoqda. Agar bu holat saqlansa, CEO/Admin bir marta kirib CRM sinxronizatsiyasini tekshirsin.");
       }
     }, 1800);
     return () => clearTimeout(timer);
-  }, [profile?.uid, bootSettled, migrationReady, projectsReady, publicUsersReady, legacyFallback.projects.length, legacyFallback.publicUsers.length, authError]);
+  }, [profile?.uid, bootSettled, migrationReady, projectsReady, publicUsersReady, authError]);
 
   // Cache write debounced — prevent extra re-renders from rapid state updates
   useEffect(() => {
@@ -4054,21 +4072,13 @@ function AppShell() {
     return () => clearTimeout(timer);
   }, [profile?.uid, projectDocs, publicUsers, privateUsers, shootDocs, meetingDocs, notificationDocs, auditDocs]);
 
-  const effectiveProjectDocs = useMemo(
-    () => (projectDocs.length ? projectDocs : legacyFallback.projects),
-    [projectDocs, legacyFallback.projects]
-  );
-  const effectivePublicUsers = useMemo(() => {
-    const sourceUsers = publicUsers.length ? publicUsers : legacyFallback.publicUsers;
+  const effectiveData = useMemo(() => {
     const selfUser = profileToPublicUser(profile);
-    const mergedUsers = selfUser ? Object.values(indexById([...sourceUsers, selfUser])) : sourceUsers;
-    return [...mergedUsers].sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
-  }, [publicUsers, legacyFallback.publicUsers, profile]);
-  const selectedLegacyWorkspace = useMemo(
-    () => (selectedProjectId ? legacyFallback.workspaceByProjectId[selectedProjectId] || EMPTY_PROJECT_WORKSPACE : EMPTY_PROJECT_WORKSPACE),
-    [legacyFallback.workspaceByProjectId, selectedProjectId]
-  );
-  const usingLegacyProjects = projectDocs.length === 0 && legacyFallback.projects.length > 0;
+    const mergedUsers = selfUser ? Object.values(indexById([...publicUsers, selfUser])) : publicUsers;
+    return canonicalizeUsersAndProjects(mergedUsers, projectDocs, profile);
+  }, [projectDocs, publicUsers, profile]);
+  const effectiveProjectDocs = effectiveData.projects;
+  const effectivePublicUsers = effectiveData.users;
   const usersReady = publicUsersReady || effectivePublicUsers.length > 0;
   const teamReady = usersReady && (!canManagePeople(profile?.role) || privateUsersReady);
   const crmReady = migrationReady && (projectsReady || effectiveProjectDocs.length > 0) && usersReady;
@@ -4088,8 +4098,8 @@ function AppShell() {
 
   const selectedProject = useMemo(() => {
     if (!selectedProjectId || !selectedProjectMeta) return null;
-    return hydrateProject(selectedProjectMeta, usingLegacyProjects ? selectedLegacyWorkspace : selectedProjectWorkspace);
-  }, [selectedProjectId, selectedProjectMeta, selectedProjectWorkspace, selectedLegacyWorkspace, usingLegacyProjects]);
+    return hydrateProject(selectedProjectMeta, selectedProjectWorkspace);
+  }, [selectedProjectId, selectedProjectMeta, selectedProjectWorkspace]);
   const shoots = useMemo(() => visibleShoots(profile, shootDocs, effectiveProjectDocs), [profile, shootDocs, effectiveProjectDocs]);
   const projectCaches = useMemo(() => buildProjectCaches(projects), [projects]);
   const unreadCount = useMemo(() => (profile ? unreadNotifications(notificationDocs, profile.uid) : 0), [notificationDocs, profile]);
