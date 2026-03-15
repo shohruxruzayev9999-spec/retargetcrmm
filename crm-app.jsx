@@ -78,6 +78,7 @@ const SHOOT_STATUSES = ["Yangi", "Rejalashtirildi", "Jarayonda", "Kutilmoqda", "
 const CALL_STATUSES = COMMON_WORK_STATUSES;
 const PRIORITIES = ["Yuqori", "O'rta", "Past"];
 const PLATFORMS = ["Instagram", "Facebook", "TikTok", "YouTube", "Telegram"];
+const REALTIME_DELAY_MESSAGE = "Realtime ma'lumotlar serverdan kechikib kelmoqda. Agar bu holat saqlansa, CEO/Admin bir marta kirib CRM sinxronizatsiyasini tekshirsin.";
 const FORMATS = ["Post", "Reels", "Story", "Video", "Carousel", "Live"];
 const DEPARTMENTS = ["SMM bo'limi", "Target bo'limi", "Media bo'limi", "Sales bo'limi", "Project Management", "Boshqaruv"];
 const EMOJI_GROUPS = [
@@ -4049,11 +4050,17 @@ function AppShell() {
     const timer = setTimeout(() => {
       setBootSettled(true);
       if (!projectsReady && !publicUsersReady && !authError) {
-        setAuthError("Realtime ma'lumotlar serverdan kechikib kelmoqda. Agar bu holat saqlansa, CEO/Admin bir marta kirib CRM sinxronizatsiyasini tekshirsin.");
+        setAuthError(REALTIME_DELAY_MESSAGE);
       }
-    }, 1800);
+    }, 3500);
     return () => clearTimeout(timer);
   }, [profile?.uid, bootSettled, migrationReady, projectsReady, publicUsersReady, authError]);
+
+  useEffect(() => {
+    if (authError === REALTIME_DELAY_MESSAGE && crmReady) {
+      setAuthError("");
+    }
+  }, [authError, crmReady]);
 
   // Cache write debounced — prevent extra re-renders from rapid state updates
   useEffect(() => {
