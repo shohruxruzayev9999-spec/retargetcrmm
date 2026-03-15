@@ -4075,12 +4075,6 @@ function AppShell() {
     return () => clearTimeout(timer);
   }, [profile?.uid, bootSettled, migrationReady, projectsReady, publicUsersReady, authError]);
 
-  useEffect(() => {
-    if (authError === REALTIME_DELAY_MESSAGE && crmReady) {
-      setAuthError("");
-    }
-  }, [authError, crmReady]);
-
   // Cache write debounced — prevent extra re-renders from rapid state updates
   useEffect(() => {
     if (!profile) return undefined;
@@ -4110,6 +4104,13 @@ function AppShell() {
   const crmReady = migrationReady && (projectsReady || effectiveProjectDocs.length > 0) && usersReady;
   const primaryLoading = !bootSettled && !crmReady && migrationReady && effectiveProjectDocs.length === 0 && effectivePublicUsers.length === 0;
   const teamLoading = !bootSettled && !teamReady && effectivePublicUsers.length === 0;
+
+  useEffect(() => {
+    if (authError === REALTIME_DELAY_MESSAGE && crmReady) {
+      setAuthError("");
+    }
+  }, [authError, crmReady]);
+
   const employees = useMemo(
     () => visibleEmployees(profile, mergeEmployeeDocs(effectivePublicUsers, privateUsers, profile?.role, effectiveProjectDocs), effectiveProjectDocs),
     [profile, effectivePublicUsers, privateUsers, effectiveProjectDocs]
