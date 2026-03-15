@@ -383,6 +383,10 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function isSyntheticEmployeeId(id) {
+  return String(id || "").startsWith("employee_") || String(id || "").startsWith("legacy_employee_");
+}
+
 function canonicalizeUsersAndProjects(users, projects, profile) {
   const groupedUsers = new Map();
   users.forEach((user) => {
@@ -397,6 +401,7 @@ function canonicalizeUsersAndProjects(users, projects, profile) {
   groupedUsers.forEach((group) => {
     const preferred =
       group.find((user) => user.id === profile?.uid) ||
+      group.find((user) => !isSyntheticEmployeeId(user.id)) ||
       group.find((user) => user.status !== "merged") ||
       group[0];
     const mergedAssignedProjectIds = Array.from(
@@ -3858,10 +3863,16 @@ function AppShell() {
       usersCollectionRef,
       (snapshot) => {
         const nextUsers = snapshot.docs.map((entry) => normalizeStoredUser(entry.id, entry.data()));
-        nextUsers.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+        const canonicalUsers = canonicalizeUsersAndProjects(
+          nextUsers,
+          projectDocsRef.current,
+          profile ? { uid: profile.uid, email: profile.email } : null
+        ).users;
         startTransition(() => {
-          setPublicUsers(nextUsers);
-          const currentUserDoc = nextUsers.find((item) => item.id === profile.uid);
+          setPublicUsers(canonicalUsers);
+          const currentUserDoc =
+            canonicalUsers.find((item) => item.id === profile.uid) ||
+            canonicalUsers.find((item) => normalizeEmail(item.email) === normalizeEmail(profile.email));
           if (currentUserDoc) {
             setProfile((currentProfile) =>
               currentProfile
