@@ -383,6 +383,14 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function profileIdentityIds(profile) {
+  const ids = new Set([profile?.uid].filter(Boolean));
+  (Array.isArray(profile?.identityIds) ? profile.identityIds : []).forEach((id) => {
+    if (id) ids.add(id);
+  });
+  return ids;
+}
+
 function isSyntheticEmployeeId(id) {
   return String(id || "").startsWith("employee_") || String(id || "").startsWith("legacy_employee_");
 }
@@ -630,7 +638,12 @@ function canRunRuntimeMigration(role) {
 function isProjectMember(profile, project) {
   if (!profile || !project) return false;
   const assignedProjectIds = Array.isArray(profile.assignedProjectIds) ? profile.assignedProjectIds : [];
-  return project.managerId === profile.uid || project.teamIds.includes(profile.uid) || assignedProjectIds.includes(project.id);
+  const identityIds = profileIdentityIds(profile);
+  return (
+    identityIds.has(project.managerId) ||
+    (project.teamIds || []).some((teamId) => identityIds.has(teamId)) ||
+    assignedProjectIds.includes(project.id)
+  );
 }
 
 function canWorkInProject(profile, project) {
@@ -652,10 +665,16 @@ function visibleProjects(profile, projects) {
   if (!profile) return [];
   if (profile.role === "EMPLOYEE") {
     const assignedProjectIds = new Set(Array.isArray(profile.assignedProjectIds) ? profile.assignedProjectIds : []);
+    const identityIds = profileIdentityIds(profile);
     return projects.filter(
       (project) =>
         !project.archived &&
-        (project.visibility === "company" || project.teamIds.includes(profile.uid) || project.managerId === profile.uid || assignedProjectIds.has(project.id))
+        (
+          project.visibility === "company" ||
+          identityIds.has(project.managerId) ||
+          (project.teamIds || []).some((teamId) => identityIds.has(teamId)) ||
+          assignedProjectIds.has(project.id)
+        )
     );
   }
   return projects.filter((project) => !project.archived);
@@ -3778,6 +3797,7 @@ function AppShell() {
           dept: nextUserDoc.dept,
           title: nextUserDoc.title,
           assignedProjectIds: Array.isArray(nextUserDoc.assignedProjectIds) ? nextUserDoc.assignedProjectIds : [],
+          identityIds: [firebaseUser.uid],
           salary: Number(privateSnapshot?.data()?.salary || 0),
           kpiBase: Number(privateSnapshot?.data()?.kpiBase || 80),
           load: Number(privateSnapshot?.data()?.load || 0),
@@ -3884,6 +3904,7 @@ function AppShell() {
                     dept: currentUserDoc.dept || currentProfile.dept,
                     title: currentUserDoc.title || currentProfile.title,
                     assignedProjectIds: Array.isArray(currentUserDoc.assignedProjectIds) ? currentUserDoc.assignedProjectIds : [],
+                    identityIds: Array.from(new Set([...(Array.isArray(currentProfile.identityIds) ? currentProfile.identityIds : []), currentProfile.uid])),
                   }
                 : currentProfile
             );
@@ -3899,6 +3920,71 @@ function AppShell() {
     );
     return () => unsubscribe();
   }, [profile?.uid, usersCollectionRef, migrationReady]);
+
+  useEffect(() => {
+    if (!profile || profile.role !== "EMPLOYEE" || !legacyRootRef || !migrationReady) return undefined;
+    if (projectsReady || projectDocs.length > 0) return undefined;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const legacySnapshot = await getDoc(legacyRootRef);
+        if (!legacySnapshot.exists()) return;
+        const legacy = normalizeCrmPayload(legacySnapshot.data()?.payload);
+        const profileEmail = normalizeEmail(profile.email);
+        if (!profileEmail) return;
+
+        const legacyIdentityIds = legacy.employees
+          .map((employee, index) => ({
+            id: employee.id || employee.uid || employee.email || `legacy_employee_${index}`,
+            email: normalizeEmail(employee.email),
+          }))
+          .filter((employee) => employee.email === profileEmail)
+          .map((employee) => employee.id)
+          .filter(Boolean);
+
+        if (!legacyIdentityIds.length) return;
+
+        const identityIds = new Set([profile.uid, ...legacyIdentityIds]);
+        const fallbackProjects = sortByRecent(
+          legacy.projects
+            .filter((project) =>
+              [project.managerId, ...(Array.isArray(project.teamIds) ? project.teamIds : [])]
+                .filter(Boolean)
+                .some((memberId) => identityIds.has(memberId))
+            )
+            .map((project) => normalizeStoredProjectMeta(project.id, projectMetaDocFromProject(project, profile, project))),
+          "updatedAt"
+        ).filter((project) => !project.archived);
+
+        if (cancelled || !fallbackProjects.length) return;
+
+        startTransition(() => {
+          setProjectDocs((current) =>
+            current.length ? current : sortByRecent(Object.values(indexById([...current, ...fallbackProjects])), "updatedAt")
+          );
+          setProjectsReady(true);
+          setProfile((currentProfile) =>
+            currentProfile
+              ? {
+                  ...currentProfile,
+                  identityIds: Array.from(new Set([...(Array.isArray(currentProfile.identityIds) ? currentProfile.identityIds : []), currentProfile.uid, ...legacyIdentityIds])),
+                  assignedProjectIds: Array.from(
+                    new Set([...(Array.isArray(currentProfile.assignedProjectIds) ? currentProfile.assignedProjectIds : []), ...fallbackProjects.map((project) => project.id)])
+                  ),
+                }
+              : currentProfile
+          );
+        });
+      } catch (error) {
+        console.error("[CRM] employee legacy project fallback error:", error?.code, error?.message);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.uid, profile?.email, profile?.role, legacyRootRef, migrationReady, projectsReady, projectDocs.length]);
 
   useEffect(() => {
     if (!profile || !userPrivateCollectionRef || !migrationReady) return undefined;
