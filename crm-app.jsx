@@ -3666,6 +3666,7 @@ function AppShell() {
   const [privateUsersReady, setPrivateUsersReady] = useState(Object.keys(initialPrivateUsers).length > 0);
   const [projectWorkspaceReady, setProjectWorkspaceReady] = useState(true);
   const [chatReady, setChatReady] = useState(initialChatMessages.length > 0);
+  const [bootSettled, setBootSettled] = useState(initialProjects.length > 0 || initialPublicUsers.length > 0);
   const [chatHasMore, setChatHasMore] = useState(initialChatMessages.length >= 60);
   const [chatLoadingOlder, setChatLoadingOlder] = useState(false);
   const [chatCursor, setChatCursor] = useState(initialChatMessages[0]?.createdAt || "");
@@ -4136,9 +4137,16 @@ function AppShell() {
       setPrivateUsersReady(true);
       setChatReady(true);
       setProjectWorkspaceReady(true);
+      setBootSettled(true);
     }, 2000);
     return () => clearTimeout(timeout);
   }, [profile?.uid]);
+
+  useEffect(() => {
+    if (projectsReady || publicUsersReady) {
+      setBootSettled(true);
+    }
+  }, [projectsReady, publicUsersReady]);
 
   // Cache write debounced — prevent extra re-renders from rapid state updates
   useEffect(() => {
@@ -4168,6 +4176,9 @@ function AppShell() {
   const usersReady = publicUsersReady;
   const teamReady = publicUsersReady && (!canManagePeople(profile?.role) || privateUsersReady);
   const crmReady = projectsReady && publicUsersReady;
+  const primaryLoading = !bootSettled && !crmReady && projectDocs.length === 0 && publicUsers.length === 0;
+  const teamLoading = !bootSettled && !teamReady && publicUsers.length === 0;
+  const chatPageLoading = !bootSettled && !chatReady && chatMessages.length === 0;
   const employees = useMemo(() => visibleEmployees(profile, mergeEmployeeDocs(publicUsers, privateUsers, profile?.role, projectDocs), projectDocs), [profile, publicUsers, privateUsers, projectDocs]);
   const projects = useMemo(() => visibleProjects(profile, projectDocs), [profile, projectDocs]);
   // FIX: Only recalculate selectedProject when THIS project's meta changes,
@@ -4816,7 +4827,7 @@ function AppShell() {
               employeeMetricsById={projectCaches.employeeMetricsById}
               progressByProjectId={projectCaches.progressByProjectId}
               dashboardSummary={projectCaches.dashboardSummary}
-              loading={!crmReady}
+              loading={primaryLoading}
               onOpenProject={(id) => {
                 setSelectedProjectId(id);
                 setPage("projects");
@@ -4837,7 +4848,7 @@ function AppShell() {
               onCreateProject={createProject}
               onSaveProject={saveProject}
               onDeleteProject={deleteProject}
-              loading={!crmReady}
+              loading={primaryLoading}
               progressByProjectId={projectCaches.progressByProjectId}
             />
           ) : null}
@@ -4852,13 +4863,13 @@ function AppShell() {
               onSaveEmployee={saveEmployee}
               onCreateEmployee={createEmployee}
               onDeleteEmployee={deleteEmployee}
-              loading={!teamReady}
+              loading={teamLoading}
             />
           ) : null}
 
           {page === "shooting" ? <ShootingPage profile={profile} shoots={shoots} projects={projects} employees={employees} onSaveShoot={saveShoot} onDeleteShoot={deleteShoot} /> : null}
           {page === "meetings" ? <MeetingsPage profile={profile} meetings={meetingDocs} employees={employees} onAddMeeting={addMeeting} onDeleteMeeting={deleteMeeting} /> : null}
-          {page === "chat" ? <ChatPage profile={profile} employees={employees} messages={chatMessages} onSendMessage={sendChatMessage} onEditMessage={editChatMessage} onMarkRead={markChatMessagesRead} onLoadOlder={loadOlderMessages} hasMore={chatHasMore} loadingOlder={chatLoadingOlder} loading={!chatReady} /> : null}
+          {page === "chat" ? <ChatPage profile={profile} employees={employees} messages={chatMessages} onSendMessage={sendChatMessage} onEditMessage={editChatMessage} onMarkRead={markChatMessagesRead} onLoadOlder={loadOlderMessages} hasMore={chatHasMore} loadingOlder={chatLoadingOlder} loading={chatPageLoading} /> : null}
           {page === "notifications" ? <NotificationsPage notifications={notificationDocs} profile={profile} onMarkAllRead={markAllNotificationsRead} /> : null}
           {page === "reports" && canViewReports(profile.role) ? <ReportsPage projects={projects} /> : null}
           {page === "workflow" ? <WorkflowPage /> : null}
