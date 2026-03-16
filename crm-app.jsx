@@ -3931,7 +3931,10 @@ function AppShell() {
 
   useEffect(() => {
     if (!profile || profile.role !== "EMPLOYEE" || !legacyRootRef || !migrationReady) return undefined;
-    if (projectsReady || projectDocs.length > 0) return undefined;
+    const alreadyVisibleProjects = projectDocs.some(
+      (project) => !project.archived && (project.visibility === "company" || isProjectMember(profile, project))
+    );
+    if (alreadyVisibleProjects) return undefined;
     let cancelled = false;
 
     (async () => {
@@ -3992,7 +3995,7 @@ function AppShell() {
     return () => {
       cancelled = true;
     };
-  }, [profile?.uid, profile?.email, profile?.role, legacyRootRef, migrationReady, projectsReady, projectDocs.length]);
+  }, [profile?.uid, profile?.email, profile?.role, profile?.assignedProjectIds, profile?.identityIds, legacyRootRef, migrationReady, projectDocs]);
 
   useEffect(() => {
     if (!profile || !userPrivateCollectionRef || !migrationReady) return undefined;
