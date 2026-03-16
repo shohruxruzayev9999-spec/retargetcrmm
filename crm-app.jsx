@@ -420,6 +420,7 @@ function canonicalizeUsersAndProjects(users, projects, profile) {
     const canonicalUser = normalizeStoredUser(preferred.id, {
       ...preferred,
       assignedProjectIds: mergedAssignedProjectIds,
+      identityIds: group.map((user) => user.id).filter(Boolean),
     });
     canonicalUsers.push(canonicalUser);
     group.forEach((user) => {
@@ -875,6 +876,7 @@ function normalizeStoredUser(id, data) {
   return {
     id,
     uid: data.uid || id,
+    identityIds: Array.from(new Set([id, ...(Array.isArray(data.identityIds) ? data.identityIds : [])].filter(Boolean))),
     email: data.email || "",
     name: data.name || "",
     avatarUrl: data.avatarUrl || "",
@@ -3904,7 +3906,13 @@ function AppShell() {
                     dept: currentUserDoc.dept || currentProfile.dept,
                     title: currentUserDoc.title || currentProfile.title,
                     assignedProjectIds: Array.isArray(currentUserDoc.assignedProjectIds) ? currentUserDoc.assignedProjectIds : [],
-                    identityIds: Array.from(new Set([...(Array.isArray(currentProfile.identityIds) ? currentProfile.identityIds : []), currentProfile.uid])),
+                    identityIds: Array.from(
+                      new Set([
+                        ...(Array.isArray(currentProfile.identityIds) ? currentProfile.identityIds : []),
+                        ...(Array.isArray(currentUserDoc.identityIds) ? currentUserDoc.identityIds : []),
+                        currentProfile.uid,
+                      ])
+                    ),
                   }
                 : currentProfile
             );
