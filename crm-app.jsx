@@ -3998,6 +3998,48 @@ function AppShell() {
   }, [profile?.uid, profile?.email, profile?.role, profile?.assignedProjectIds, profile?.identityIds, legacyRootRef, migrationReady, projectDocs]);
 
   useEffect(() => {
+    if (!profile || profile.role !== "EMPLOYEE" || !projectsCollectionRef || !migrationReady) return undefined;
+    const assignedProjectIds = Array.isArray(profile.assignedProjectIds) ? profile.assignedProjectIds.filter(Boolean) : [];
+    if (!assignedProjectIds.length) return undefined;
+
+    const visibleAssignedProjects = projectDocs.filter(
+      (project) => !project.archived && (assignedProjectIds.includes(project.id) || isProjectMember(profile, project))
+    );
+    if (visibleAssignedProjects.length) return undefined;
+
+    const missingProjectIds = assignedProjectIds.filter((projectId) => !projectDocs.some((project) => project.id === projectId));
+    if (!missingProjectIds.length) return undefined;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const projectSnapshots = await Promise.all(
+          missingProjectIds.map((projectId) => getDoc(doc(projectsCollectionRef, projectId)))
+        );
+
+        const fallbackProjects = projectSnapshots
+          .filter((snapshot) => snapshot.exists())
+          .map((snapshot) => normalizeStoredProjectMeta(snapshot.id, snapshot.data()))
+          .filter((project) => !project.archived);
+
+        if (cancelled || !fallbackProjects.length) return;
+
+        startTransition(() => {
+          setProjectDocs((current) => sortByRecent(Object.values(indexById([...current, ...fallbackProjects])), "updatedAt"));
+          setProjectsReady(true);
+        });
+      } catch (error) {
+        console.error("[CRM] employee assigned project fallback error:", error?.code, error?.message);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.uid, profile?.role, profile?.assignedProjectIds, profile?.identityIds, projectsCollectionRef, migrationReady, projectDocs]);
+
+  useEffect(() => {
     if (!profile || !userPrivateCollectionRef || !migrationReady) return undefined;
     if (!canManagePeople(profile.role)) {
       setPrivateUsers({});
