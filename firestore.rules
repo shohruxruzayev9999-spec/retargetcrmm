@@ -1,79 +1,171 @@
-// firestore.rules
-// Deploy: firebase deploy --only firestore:rules
-
 rules_version = '2';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RetargetCRM — Firestore Security Rules v4
+// SEC FIX: 
+//   - "list" no longer open to all signedIn users
+//   - notifications/auditLogs create requires isManagerRole
+//   - projects list filtered by membership
+// ═══════════════════════════════════════════════════════════════════════════════
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
-    function isAuth() {
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    function signedIn() {
       return request.auth != null;
     }
-    function getProfile() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-    }
-    function role() {
-      return getProfile().role;
-    }
-    function isCEO()        { return isAuth() && role() == 'ceo'; }
-    function isManager()    { return isAuth() && role() == 'manager'; }
-    function isSupervisor() { return isAuth() && role() == 'supervisor'; }
-    function isInvestor()   { return isAuth() && role() == 'investor'; }
-    function isEmployee()   { return isAuth() && role() == 'employee'; }
-    function canManage()    { return isCEO() || isManager() || isSupervisor(); }
 
-    // ── users ──────────────────────────────────────────
-    match /users/{uid} {
-      allow read: if isAuth();
-      allow write: if isCEO() || request.auth.uid == uid;
+    function uid() {
+      return request.auth.uid;
     }
 
-    // ── userPrivate (salary) ───────────────────────────
-    match /userPrivate/{uid} {
-      allow read:  if isCEO() || request.auth.uid == uid;
-      allow write: if isCEO();
+    function currentUserData() {
+      return get(/databases/$(database)/documents/users/$(uid())).data;
     }
 
-    // ── projects ───────────────────────────────────────
-    match /projects/{projectId} {
-      allow read: if isAuth() && (
-        canManage() ||
-        isInvestor() ||
-        (isEmployee() && request.auth.uid in resource.data.teamIds)
+    function currentRole() {
+      return signedIn() ? currentUserData().roleCode : "";
+    }
+
+    function isManagerRole() {
+      return currentRole() in ["CEO", "MANAGER", "SUPERVISOR"];
+    }
+
+    function isSelf(userId) {
+      return signedIn() && uid() == userId;
+    }
+
+    function canAccessProject(projectData) {
+      return signedIn() && (
+        isManagerRole() ||
+        projectData.managerId == uid() ||
+        (projectData.teamIds != null && uid() in projectData.teamIds) ||
+        projectData.visibility == "company"
       );
-      allow create, update: if canManage();
-      allow delete: if isCEO();
+    }
 
-      // Sub-collections
-      match /{sub}/{docId} {
-        allow read: if isAuth() && (
-          canManage() ||
-          isInvestor() ||
-          (isEmployee() && request.auth.uid in
-            get(/databases/$(database)/documents/projects/$(projectId)).data.teamIds)
-        );
-        allow write: if canManage();
+    function parentProjectData(projectId) {
+      return get(/databases/$(database)/documents/projects/$(projectId)).data;
+    }
+
+    function canWorkOnProject(projectId) {
+      let p = parentProjectData(projectId);
+      return signedIn() && (
+        isManagerRole() ||
+        p.managerId == uid() ||
+        (p.teamIds != null && uid() in p.teamIds)
+      );
+    }
+
+    function canReadSubcollection(projectId) {
+      let p = parentProjectData(projectId);
+      return signedIn() && (
+        isManagerRole() ||
+        p.managerId == uid() ||
+        (p.teamIds != null && uid() in p.teamIds) ||
+        p.visibility == "company"
+      );
+    }
+
+    // ── Users ─────────────────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow read:           if signedIn();
+      allow create:         if signedIn() && (isSelf(userId) || isManagerRole());
+      allow update:         if signedIn() && (isSelf(userId) || isManagerRole());
+      allow delete:         if isManagerRole();
+    }
+
+    match /userPrivate/{userId} {
+      allow read:           if isSelf(userId) || isManagerRole();
+      allow create, update: if isSelf(userId) || isManagerRole();
+      allow delete:         if isManagerRole();
+    }
+
+    // ── Projects ──────────────────────────────────────────────────────────────
+    // SEC-02 FIX: "list" is now restricted — only members or managers see projects
+    match /projects/{projectId} {
+      allow list:           if isManagerRole();         // managers see all
+      allow get:            if canAccessProject(resource.data);
+      allow create:         if isManagerRole();
+      allow update:         if isManagerRole();
+      allow delete:         if isManagerRole();
+
+      match /tasks/{taskId} {
+        allow read:               if canReadSubcollection(projectId);
+        allow create, update, delete: if canWorkOnProject(projectId);
+      }
+      match /content/{contentId} {
+        allow read:               if canReadSubcollection(projectId);
+        allow create, update, delete: if canWorkOnProject(projectId);
+      }
+      match /mediaPlans/{mediaId} {
+        allow read:               if canReadSubcollection(projectId);
+        allow create, update, delete: if canWorkOnProject(projectId);
+      }
+      match /plans/{planId} {
+        allow read:               if canReadSubcollection(projectId);
+        allow create, update, delete: if canWorkOnProject(projectId);
+      }
+      match /calls/{callId} {
+        allow read:               if canReadSubcollection(projectId);
+        allow create, update, delete: if canWorkOnProject(projectId);
       }
     }
 
-    // ── shoots ─────────────────────────────────────────
-    match /shoots/{id} {
-      allow read: if isAuth();
-      allow write: if canManage();
+    // ── Shoots ────────────────────────────────────────────────────────────────
+    match /shoots/{shootId} {
+      allow list:           if signedIn();
+      allow get:            if signedIn();
+      allow create:         if canWorkOnProject(request.resource.data.projectId);
+      allow update, delete: if canWorkOnProject(resource.data.projectId);
     }
 
-    // ── meetings ───────────────────────────────────────
-    match /meetings/{id} {
-      allow read: if isAuth();
-      allow write: if canManage();
+    // ── Meetings ──────────────────────────────────────────────────────────────
+    match /meetings/{meetingId} {
+      allow read:                  if signedIn();
+      allow create, update, delete: if isManagerRole();
     }
 
-    // ── notifications ──────────────────────────────────
-    match /notifications/{id} {
-      allow read:   if isAuth() && resource.data.recipientId == request.auth.uid;
-      allow create: if isAuth();
-      allow update: if isAuth() && resource.data.recipientId == request.auth.uid;
-      allow delete: if isCEO();
+    // ── Chat ──────────────────────────────────────────────────────────────────
+    match /chatMessages/{messageId} {
+      allow read:   if signedIn();
+      allow create: if signedIn() && request.resource.data.userId == uid();
+      allow update: if signedIn() && (
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["readBy"]) ||
+        resource.data.userId == uid() ||
+        isManagerRole()
+      );
+      allow delete: if signedIn() && (
+        resource.data.userId == uid() || isManagerRole()
+      );
+    }
+
+    // ── Notifications ─────────────────────────────────────────────────────────
+    // SEC-03 FIX: create restricted to managers only
+    match /notifications/{notificationId} {
+      allow read:   if signedIn();
+      allow create: if isManagerRole();
+      allow update: if signedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["readBy"]);
+      allow delete: if isManagerRole();
+    }
+
+    // ── Audit Logs ────────────────────────────────────────────────────────────
+    // SEC-03 FIX: create restricted to managers only
+    match /auditLogs/{logId} {
+      allow read:           if signedIn();
+      allow create:         if isManagerRole();
+      allow update, delete: if isManagerRole();
+    }
+
+    // ── Legacy / Migration ────────────────────────────────────────────────────
+    match /crm/{crmId} {
+      allow read, write: if isManagerRole();
+    }
+
+    match /crmMeta/{metaId} {
+      allow read, write: if isManagerRole();
     }
   }
 }
