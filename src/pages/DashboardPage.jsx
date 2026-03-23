@@ -812,7 +812,7 @@ const CallsTab = memo(function CallsTab({ profile, project, employees, editable,
 const ProjectDetailPage = memo(function ProjectDetailPage({ profile, project, employees, onBack, onSaveProject, onDeleteProject }) {
   const [tab, setTab] = useState("tasks");
   const [editingProject, setEditingProject] = useState(false);
-  const editable = canManageProjectMeta(profile);
+  const editable = canManageProjectMeta(profile, project);
   const sectionEditable = canWorkInProject(profile, project);
   const progress = calcProjectProgress(project);
   const employeeMap = useMemo(() => indexById(employees), [employees]);

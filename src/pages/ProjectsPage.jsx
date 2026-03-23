@@ -72,7 +72,7 @@ export const ProjectsPage = memo(function ProjectsPage({ profile, projects, empl
                     </div>
                   </div>
                   <div style={{ flex: 1 }}>
-                    {editable ? (
+                    {canManageProjectMeta(profile, project) ? (
                       <div onClick={(event) => event.stopPropagation()}>
                         <StatusSelect value={project.status} options={PROJECT_STATUSES} onChange={(status) => onSaveProject({ ...project, status }, { notifyText: "Loyiha holati o'zgardi", auditText: `Loyiha statusi o'zgardi: ${status}`, page: "projects" })} />
                       </div>
@@ -116,4 +116,3 @@ export const ProjectsPage = memo(function ProjectsPage({ profile, projects, empl
     </div>
   );
 });
-

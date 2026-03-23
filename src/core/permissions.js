@@ -19,8 +19,9 @@ export function canWorkInProject(profile, project) {
   return canEdit(profile.role) || isProjectMember(profile, project);
 }
 
-export function canManageProjectMeta(profile) {
-  return canEdit(profile?.role);
+export function canManageProjectMeta(profile, project) {
+  if (!profile) return false;
+  return canEdit(profile.role) || Boolean(project && project.managerId === profile.uid);
 }
 
 export function visibleProjects(profile, projects) {
