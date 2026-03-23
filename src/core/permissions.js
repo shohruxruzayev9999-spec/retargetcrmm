@@ -8,6 +8,7 @@ const PEOPLE_MGMT_ROLES = new Set(["CEO", "MANAGER", "SUPERVISOR"]);
 export function canEdit(role)          { return EDITOR_ROLES.has(role); }
 export function canViewReports(role)   { return REPORT_VIEW_ROLES.has(role); }
 export function canManagePeople(role)  { return PEOPLE_MGMT_ROLES.has(role); }
+export function canViewFinancialDashboard(role) { return role === "CEO"; }
 
 export function isProjectMember(profile, project) {
   if (!profile || !project) return false;

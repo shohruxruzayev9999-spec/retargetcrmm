@@ -151,6 +151,10 @@ service cloud.firestore {
       allow delete: if isManagerRole();
     }
 
+    match /financialSnapshots/{snapshotId} {
+      allow read, create, update, delete: if signedIn() && currentRole() == "CEO";
+    }
+
     // ── Audit Logs ────────────────────────────────────────────────────────────
     // SEC-03 FIX: create restricted to managers only
     match /auditLogs/{logId} {

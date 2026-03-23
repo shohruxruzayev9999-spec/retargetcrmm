@@ -9,4 +9,5 @@ export { MeetingsPage }      from "./MeetingsPage.jsx";
 export { ChatPage }          from "./ChatPage.jsx";
 export { NotificationsPage } from "./NotificationsPage.jsx";
 export { ReportsPage }       from "./ReportsPage.jsx";
+export { FinancePage }       from "./FinancePage.jsx";
 export { WorkflowPage }      from "./WorkflowPage.jsx";

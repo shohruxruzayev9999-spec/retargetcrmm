@@ -14,7 +14,7 @@ import { auth, db, googleProvider, hasFirebaseConfig } from "./core/firebase.js"
 import {
   T, ROLE_META, FIXED_ROLE_BY_EMAIL, PROJECT_STATUSES, TASK_STATUSES,
   CONTENT_STATUSES, PLAN_STATUSES, SHOOT_STATUSES, CALL_STATUSES,
-  PRIORITIES, PLATFORMS, FORMATS, DEPARTMENTS,
+  PRIORITIES, PLATFORMS, FORMATS, DEPARTMENTS, ROOT_DOC_ID,
   EMPTY_PROJECT_WORKSPACE, CRM_CACHE_KEY, CHAT_CACHE_KEY, LIMITS,
 } from "./core/constants.js";
 import {
@@ -26,7 +26,7 @@ import {
 import {
   canEdit, canViewReports, canManagePeople, canWorkInProject,
   canManageProjectMeta, visibleProjects, visibleShoots, visibleEmployees,
-  projectMembers, isProjectMember,
+  projectMembers, isProjectMember, canViewFinancialDashboard,
 } from "./core/permissions.js";
 import {
   normalizeProject, normalizeStoredProjectMeta, normalizeStoredRecord,
@@ -39,6 +39,7 @@ import {
   commitBatchOperations, syncCollectionOperations, createMetaDocs,
   buildAssignedProjectIdOps, migrateLegacyRootSchema,
 } from "./core/firestoreService.js";
+import { buildFinancialDashboard, buildFinancialSnapshotDoc } from "./core/financeService.js";
 import {
   Avatar, Button, Card, PageHeader, Field, Modal, ConfirmDialog,
   EmptyState, SkeletonBlock, DashboardSkeleton, GridSkeleton,
@@ -56,6 +57,7 @@ import { MeetingsPage }      from "./pages/MeetingsPage.jsx";
 import { ChatPage }          from "./pages/ChatPage.jsx";
 import { NotificationsPage } from "./pages/NotificationsPage.jsx";
 import { ReportsPage }       from "./pages/ReportsPage.jsx";
+import { FinancePage }       from "./pages/FinancePage.jsx";
 import { WorkflowPage }      from "./pages/WorkflowPage.jsx";
 // ─── Firestore collection refs (ARCH-02 FIX: module-level, not per-render) ────
 // These are stable references — created once when module loads.
@@ -80,6 +82,7 @@ function Sidebar({ profile, page, onNavigate, onLogout, unreadCount }) {
     { id: "meetings",      label: "Uchrashuvlar",      icon: "◷" },
     { id: "chat",          label: "Chat",              icon: "◯" },
     { id: "notifications", label: "Bildirishnomalar",  icon: "◌", badge: unreadCount },
+    ...(canViewFinancialDashboard(profile.role) ? [{ id: "finance", label: "Moliyaviy dashboard", icon: "◍" }] : []),
     ...(canViewReports(profile.role) ? [{ id: "reports", label: "Hisobotlar", icon: "◈" }] : []),
     { id: "workflow",      label: "Workflow",          icon: "⋯" },
   ];
@@ -298,6 +301,11 @@ function AppShell() {
   const shoots       = useMemo(() => visibleShoots(profile, shootDocs, projectDocs), [profile, shootDocs, projectDocs]);
   const projectCaches= useMemo(() => buildProjectCaches(projects), [projects]);
   const unreadCount  = useMemo(() => profile ? unreadNotifications(notificationDocs, profile.uid) : 0, [notificationDocs, profile]);
+  const financialDashboard = useMemo(() => buildFinancialDashboard({
+    projects,
+    employees,
+    employeeMetricsById: projectCaches.employeeMetricsById,
+  }), [projects, employees, projectCaches.employeeMetricsById]);
 
   // ── Ref sync ──────────────────────────────────────────────────────────────
   useEffect(() => { projectDocsRef.current  = projectDocs; },  [projectDocs]);
@@ -557,6 +565,17 @@ function AppShell() {
     const t = setTimeout(() => writeCache(CHAT_CACHE_KEY, chatMessages.slice(-160)), 400);
     return () => clearTimeout(t);
   }, [profile?.uid, chatMessages, chatReady]);
+
+  useEffect(() => {
+    if (!profile || !db || !canViewFinancialDashboard(profile.role)) return undefined;
+    const payload = buildFinancialSnapshotDoc(financialDashboard, profile);
+    const timer = setTimeout(() => {
+      setDoc(doc(db, "financialSnapshots", ROOT_DOC_ID), payload, { merge: true }).catch((error) => {
+        console.error("[CRM] financial snapshot:", error?.code, error?.message);
+      });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [profile?.uid, profile?.role, financialDashboard]);
 
   // ── Derived loading flags ─────────────────────────────────────────────────
   const primaryLoading   = !bootSettled && !projectsReady  && projectDocs.length === 0 && publicUsers.length === 0;
@@ -901,6 +920,7 @@ function AppShell() {
           {page === "meetings"      && <MeetingsPage profile={profile} meetings={meetingDocs} employees={employees} onAddMeeting={addMeeting} onDeleteMeeting={deleteMeeting} />}
           {page === "chat"          && <ChatPage profile={profile} employees={employees} messages={chatMessages} onSendMessage={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onMarkRead={markChatMessagesRead} onLoadOlder={loadOlderMessages} hasMore={chatHasMore} loadingOlder={chatLoadingOlder} loading={chatPageLoading} />}
           {page === "notifications" && <NotificationsPage notifications={notificationDocs} profile={profile} onMarkAllRead={markAllNotificationsRead} />}
+          {page === "finance" && canViewFinancialDashboard(profile.role) && <FinancePage dashboard={financialDashboard} />}
           {page === "reports" && canViewReports(profile.role) && <ReportsPage projects={projects} />}
           {page === "workflow"      && <WorkflowPage />}
         </main>
