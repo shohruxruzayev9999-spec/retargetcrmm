@@ -87,7 +87,6 @@ export const PRIORITY_META = {
 export const ROOT_DOC_ID   = "agency-crm";
 export const SCHEMA_VERSION = 3;
 export const CRM_CACHE_KEY  = `agency-crm-cache:${ROOT_DOC_ID}`;
-export const CHAT_CACHE_KEY = `agency-crm-chat-cache:${ROOT_DOC_ID}`;
 export const PROJECTS_PAGE_SIZE = 50;
 
 // ─── Field Limits (UX-03 fix) ─────────────────────────────────────────────────
@@ -95,7 +94,6 @@ export const LIMITS = {
   projectName:  100,
   clientName:   100,
   taskName:     200,
-  chatMessage:  2000,
   note:         1000,
   caption:      2000,
   title:        200,

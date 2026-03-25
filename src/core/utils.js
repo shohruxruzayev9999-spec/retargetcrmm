@@ -22,7 +22,7 @@ export function pageLabel(page) {
   return {
     dashboard: "Dashboard", projects: "Loyihalar", team: "Xodimlar",
     shooting: "Syomka", meetings: "Uchrashuvlar", reports: "Hisobotlar",
-    workflow: "Workflow", chat: "Chat", notifications: "Bildirishnomalar",
+    workflow: "Workflow", notifications: "Bildirishnomalar",
   }[page] || "CRM";
 }
 

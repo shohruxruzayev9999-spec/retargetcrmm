@@ -6,8 +6,7 @@ import {
   signInWithEmailAndPassword, signInWithPopup, signOut,
 } from "firebase/auth";
 import {
-  collection, doc, getDoc, getDocs, onSnapshot,
-  orderBy, query, limitToLast, endBefore, setDoc, deleteDoc,
+  collection, doc, getDoc, onSnapshot, setDoc,
 } from "firebase/firestore";
 
 import { auth, db, googleProvider, hasFirebaseConfig } from "./core/firebase.js";
@@ -15,7 +14,7 @@ import {
   T, ROLE_META, FIXED_ROLE_BY_EMAIL, PROJECT_STATUSES, TASK_STATUSES,
   CONTENT_STATUSES, PLAN_STATUSES, SHOOT_STATUSES, CALL_STATUSES,
   PRIORITIES, PLATFORMS, FORMATS, DEPARTMENTS, ROOT_DOC_ID,
-  EMPTY_PROJECT_WORKSPACE, CRM_CACHE_KEY, CHAT_CACHE_KEY, LIMITS,
+  EMPTY_PROJECT_WORKSPACE, CRM_CACHE_KEY, LIMITS,
 } from "./core/constants.js";
 import {
   makeId, isoNow, toMoney, clamp, sortByRecent, indexById,
@@ -54,7 +53,6 @@ import { ProjectsPage }      from "./pages/ProjectsPage.jsx";
 import { TeamPage }          from "./pages/TeamPage.jsx";
 import { ShootingPage }      from "./pages/ShootingPage.jsx";
 import { MeetingsPage }      from "./pages/MeetingsPage.jsx";
-import { ChatPage }          from "./pages/ChatPage.jsx";
 import { NotificationsPage } from "./pages/NotificationsPage.jsx";
 import { ReportsPage }       from "./pages/ReportsPage.jsx";
 import { FinancePage }       from "./pages/FinancePage.jsx";
@@ -69,7 +67,6 @@ const COLS = db ? {
   meetings:      collection(db, "meetings"),
   notifications: collection(db, "notifications"),
   auditLogs:     collection(db, "auditLogs"),
-  chatMessages:  collection(db, "chatMessages"),
 } : {};
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
@@ -80,7 +77,6 @@ function Sidebar({ profile, page, onNavigate, onLogout, unreadCount }) {
     { id: "team",          label: "Xodimlar",          icon: "◉" },
     { id: "shooting",      label: "Syomka",            icon: "◎" },
     { id: "meetings",      label: "Uchrashuvlar",      icon: "◷" },
-    { id: "chat",          label: "Chat",              icon: "◯" },
     { id: "notifications", label: "Bildirishnomalar",  icon: "◌", badge: unreadCount },
     ...(canViewFinancialDashboard(profile.role) ? [{ id: "finance", label: "Moliyaviy dashboard", icon: "◍" }] : []),
     ...(canViewReports(profile.role) ? [{ id: "reports", label: "Hisobotlar", icon: "◈" }] : []),
@@ -229,7 +225,6 @@ class AppErrorBoundary extends React.Component {
 function AppShell() {
   // ── Initial cache hydration ──────────────────────────────────────────────
   const cachedCrm  = readCache(CRM_CACHE_KEY, {});
-  const cachedChat = readCache(CHAT_CACHE_KEY, []);
   const initProjects   = Array.isArray(cachedCrm.projects)      ? cachedCrm.projects.map(i => normalizeStoredProjectMeta(i.id, i)).filter(p => !p.archived)  : [];
   const initPublicUsers= Array.isArray(cachedCrm.users)         ? cachedCrm.users.map(i => normalizeStoredUser(i.id, i))                                      : [];
   const initPrivate    = cachedCrm.userPrivate && typeof cachedCrm.userPrivate === "object"
@@ -238,7 +233,6 @@ function AppShell() {
   const initMeetings   = Array.isArray(cachedCrm.meetings)      ? cachedCrm.meetings.map(i => normalizeStoredRecord(i.id, i))      : [];
   const initNotifs     = Array.isArray(cachedCrm.notifications) ? cachedCrm.notifications.map(i => normalizeStoredRecord(i.id, i)) : [];
   const initAudit      = Array.isArray(cachedCrm.auditLog)      ? cachedCrm.auditLog.map(i => normalizeStoredRecord(i.id, i))      : [];
-  const initChat       = Array.isArray(cachedChat) ? cachedChat : [];
 
   // ── State ────────────────────────────────────────────────────────────────
   const [profile,             setProfile]             = useState(null);
@@ -249,7 +243,6 @@ function AppShell() {
   const [meetingDocs,         setMeetingDocs]         = useState(initMeetings);
   const [notificationDocs,    setNotificationDocs]    = useState(initNotifs);
   const [auditDocs,           setAuditDocs]           = useState(initAudit);
-  const [chatMessages,        setChatMessages]        = useState(initChat);
   const [selectedProjectWorkspace, setSelectedProjectWorkspace] = useState(EMPTY_PROJECT_WORKSPACE);
   const [page,               setPage]               = useState("dashboard");
   const [selectedProjectId,  setSelectedProjectId]  = useState("");
@@ -258,10 +251,7 @@ function AppShell() {
   const [publicUsersReady,   setPublicUsersReady]   = useState(initPublicUsers.length > 0);
   const [privateUsersReady,  setPrivateUsersReady]  = useState(Object.keys(initPrivate).length > 0);
   const [projectWorkspaceReady, setProjectWorkspaceReady] = useState(true);
-  const [chatReady,          setChatReady]          = useState(initChat.length > 0);
   const [bootSettled,        setBootSettled]        = useState(initProjects.length > 0 || initPublicUsers.length > 0);
-  const [chatHasMore,        setChatHasMore]        = useState(initChat.length >= 60);
-  const [chatLoadingOlder,   setChatLoadingOlder]   = useState(false);
   const [authBusy,           setAuthBusy]           = useState(false);
   const [authError,          setAuthError]          = useState("");
   const [syncing,            setSyncing]            = useState(false);
@@ -273,7 +263,6 @@ function AppShell() {
   const projectDocsRef         = useRef([]);
   const publicUsersRef         = useRef([]);
   const selectedProjectRef     = useRef(null);
-  const chatCursorRef          = useRef(initChat[0]?.createdAt || "");
   const initialCacheRef        = useRef(cachedCrm);
 
   // ── Confirm dialog (UX-02 FIX: no more window.confirm) ───────────────────
@@ -348,11 +337,10 @@ function AppShell() {
           setProfile(null);
           setProjectDocs([]); setPublicUsers([]); setPrivateUsers({});
           setShootDocs([]); setMeetingDocs([]); setNotificationDocs([]);
-          setAuditDocs([]); setChatMessages([]);
+          setAuditDocs([]);
           setSelectedProjectWorkspace(EMPTY_PROJECT_WORKSPACE);
           setProjectsReady(false); setPublicUsersReady(false);
           setPrivateUsersReady(false); setProjectWorkspaceReady(false);
-          setChatReady(false); setChatHasMore(false);
           migrationRef.current = false;
           return;
         }
@@ -513,37 +501,12 @@ function AppShell() {
     return () => unsubs.forEach(u => u());
   }, [profile?.uid, selectedProjectId]);
 
-  // ── Chat subscription (page-gated) ───────────────────────────────────────
-  useEffect(() => {
-    if (!profile || !COLS.chatMessages || page !== "chat") return;
-    if (!chatMessages.length) setChatReady(false);
-    if (chatMessages.length) {
-      chatCursorRef.current = chatMessages[0]?.createdAt || "";
-      setChatHasMore(chatMessages.length >= 60);
-      setChatReady(true);
-    }
-    return onSnapshot(query(COLS.chatMessages, orderBy("createdAt"), limitToLast(60)), snap => {
-      const live = snap.docs.map(e => normalizeStoredRecord(e.id, e.data()));
-      const oldestCreatedAt = live[0]?.createdAt || "";
-      startTransition(() => {
-        setChatMessages(cur => {
-          const older = cur.filter(m => oldestCreatedAt && String(m.createdAt || "") < String(oldestCreatedAt));
-          const merged = [...older, ...live];
-          return Object.values(indexById(merged)).sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")));
-        });
-        setChatHasMore(prev => live.length >= 60 || prev);
-        setChatReady(true);
-        chatCursorRef.current = oldestCreatedAt || chatCursorRef.current;
-      });
-    }, error => { console.error("[CRM] chat:", error?.code); setChatReady(true); });
-  }, [profile?.uid, page]);
-
   // ── Boot settled safety net (PERF-05 FIX: 3s instead of 2s) ─────────────
   useEffect(() => {
     if (!profile) return;
     const t = setTimeout(() => {
       setProjectsReady(true); setPublicUsersReady(true);
-      setPrivateUsersReady(true); setChatReady(true);
+      setPrivateUsersReady(true);
       setProjectWorkspaceReady(true); setBootSettled(true);
     }, 3000);
     return () => clearTimeout(t);
@@ -561,12 +524,6 @@ function AppShell() {
   }, [profile?.uid, projectDocs, publicUsers, privateUsers, shootDocs, meetingDocs, notificationDocs, auditDocs]);
 
   useEffect(() => {
-    if (!profile || !chatReady) return;
-    const t = setTimeout(() => writeCache(CHAT_CACHE_KEY, chatMessages.slice(-160)), 400);
-    return () => clearTimeout(t);
-  }, [profile?.uid, chatMessages, chatReady]);
-
-  useEffect(() => {
     if (!profile || !db || !canViewFinancialDashboard(profile.role)) return undefined;
     const payload = buildFinancialSnapshotDoc(financialDashboard, profile);
     const timer = setTimeout(() => {
@@ -580,7 +537,6 @@ function AppShell() {
   // ── Derived loading flags ─────────────────────────────────────────────────
   const primaryLoading   = !bootSettled && !projectsReady  && projectDocs.length === 0 && publicUsers.length === 0;
   const teamLoading      = !bootSettled && !publicUsersReady && publicUsers.length === 0;
-  const chatPageLoading  = !bootSettled && !chatReady && chatMessages.length === 0;
 
   // ─── Action: navigate ──────────────────────────────────────────────────────
   const navigate = useCallback((nextPage) => {  // ARCH-03 FIX: useCallback
@@ -832,66 +788,6 @@ function AppShell() {
     finally { setSyncing(false); }
   }, [profile, confirm]);
 
-  // ─── Chat actions ──────────────────────────────────────────────────────────
-  const loadOlderMessages = useCallback(async () => {
-    const cursor = chatCursorRef.current;
-    if (!COLS.chatMessages || !cursor || chatLoadingOlder) return;
-    setChatLoadingOlder(true);
-    try {
-      const snap = await getDocs(query(COLS.chatMessages, orderBy("createdAt", "asc"), endBefore(cursor), limitToLast(40)));
-      const older = snap.docs.map(e => normalizeStoredRecord(e.id, e.data()));
-      startTransition(() => {
-        setChatMessages(cur => Object.values(indexById([...older, ...cur])).sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || ""))));
-        if (older.length) chatCursorRef.current = older[0].createdAt || cursor;
-        setChatHasMore(snap.size === 40);
-      });
-    } catch (e) { setAuthError(humanizeAuthError(e)); }
-    finally { setChatLoadingOlder(false); }
-  }, [chatLoadingOlder]);
-
-  const sendChatMessage = useCallback(async (text) => {
-    if (!COLS.chatMessages || !profile) return;
-    const msg = { id: makeId("chat"), userId: profile.uid, authorName: profile.name, text, createdAt: isoNow(), editedAt: null, readBy: { [profile.uid]: true }, status: "sending" };
-    startTransition(() => setChatMessages(cur => Object.values(indexById([...cur, msg])).sort((a,b) => String(a.createdAt||"").localeCompare(String(b.createdAt||"")))));
-    try {
-      const { status: _s, ...toStore } = msg;
-      await setDoc(doc(db, "chatMessages", msg.id), { ...toStore, status: "sent" }, { merge: false });
-      startTransition(() => setChatMessages(cur => cur.map(m => m.id === msg.id ? { ...m, status: "sent" } : m)));
-    } catch (e) {
-      startTransition(() => setChatMessages(cur => cur.map(m => m.id === msg.id ? { ...m, status: "failed" } : m)));
-      if (!String(e?.code || "").includes("permission-denied")) setAuthError(humanizeAuthError(e));
-      pushToast(humanizeAuthError(e), "error");
-    }
-  }, [profile]);
-
-  const editChatMessage = useCallback(async (messageId, text) => {
-    if (!COLS.chatMessages || !profile) return;
-    const editedAt = isoNow();
-    startTransition(() => setChatMessages(cur => cur.map(m => m.id === messageId ? { ...m, text, editedAt } : m)));
-    try { await setDoc(doc(db, "chatMessages", messageId), { text, editedAt, status: "sent" }, { merge: true }); }
-    catch (e) { setAuthError(humanizeAuthError(e)); pushToast(humanizeAuthError(e), "error"); }
-  }, [profile]);
-
-  // UX-02 FIX: delete chat message (was missing)
-  const deleteChatMessage = useCallback(async (messageId) => {
-    if (!COLS.chatMessages || !profile) return;
-    const ok = await confirm("Xabar o'chirilsinmi?");
-    if (!ok) return;
-    startTransition(() => setChatMessages(cur => cur.filter(m => m.id !== messageId)));
-    try { await deleteDoc(doc(db, "chatMessages", messageId)); }
-    catch (e) { setAuthError(humanizeAuthError(e)); pushToast(humanizeAuthError(e), "error"); }
-  }, [profile, confirm]);
-
-  const markChatMessagesRead = useCallback(async () => {
-    if (!COLS.chatMessages || !profile) return;
-    const unread = chatMessages.filter(m => m.userId !== profile.uid && !m.readBy?.[profile.uid]).slice(-30);
-    if (!unread.length) return;
-    startTransition(() => setChatMessages(cur => cur.map(m => unread.some(u => u.id === m.id) ? { ...m, readBy: { ...(m.readBy || {}), [profile.uid]: true } } : m)));
-    try {
-      await commitBatchOperations(unread.map(m => ({ type: "set", ref: doc(db, "chatMessages", m.id), data: { readBy: { ...(m.readBy || {}), [profile.uid]: true } }, options: { merge: true } })));
-    } catch (e) { if (!String(e?.code || "").includes("permission-denied")) setAuthError(humanizeAuthError(e)); }
-  }, [profile, chatMessages]);
-
   // ─── Render guard ──────────────────────────────────────────────────────────
   if (!hasFirebaseConfig) return <SetupScreen />;
   if (booting) return <LoadingScreen label="CRM yuklanmoqda..." />;
@@ -918,7 +814,6 @@ function AppShell() {
           {page === "team"          && <TeamPage profile={profile} employees={employees} projects={projects} employeeMetricsById={projectCaches.employeeMetricsById} assignmentsByEmployeeId={projectCaches.assignmentsByEmployeeId} onSaveEmployee={saveEmployee} onCreateEmployee={createEmployee} onDeleteEmployee={deleteEmployee} loading={teamLoading} />}
           {page === "shooting"      && <ShootingPage profile={profile} shoots={shoots} projects={projects} employees={employees} onSaveShoot={saveShoot} onDeleteShoot={deleteShoot} />}
           {page === "meetings"      && <MeetingsPage profile={profile} meetings={meetingDocs} employees={employees} onAddMeeting={addMeeting} onDeleteMeeting={deleteMeeting} />}
-          {page === "chat"          && <ChatPage profile={profile} employees={employees} messages={chatMessages} onSendMessage={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onMarkRead={markChatMessagesRead} onLoadOlder={loadOlderMessages} hasMore={chatHasMore} loadingOlder={chatLoadingOlder} loading={chatPageLoading} />}
           {page === "notifications" && <NotificationsPage notifications={notificationDocs} profile={profile} onMarkAllRead={markAllNotificationsRead} />}
           {page === "finance" && canViewFinancialDashboard(profile.role) && <FinancePage projects={projects} employees={employees} />}
           {page === "reports" && canViewReports(profile.role) && <ReportsPage projects={projects} />}
