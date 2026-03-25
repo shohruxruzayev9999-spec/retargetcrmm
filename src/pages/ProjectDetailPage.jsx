@@ -1,16 +1,193 @@
-import React, { memo, useEffect, useMemo, useState, useCallback } from "react";
-import { T, PROJECT_STATUSES, TASK_STATUSES, CONTENT_STATUSES, PLAN_STATUSES, SHOOT_STATUSES, CALL_STATUSES, PRIORITIES, PLATFORMS, FORMATS, LIMITS, getCurrentMonthId, getMonthLabel } from "../core/constants.js";
-import { toMoney, clamp, isoNow, makeId, sortByRecent, indexById, calcProjectProgress, flattenPlans, splitPlans } from "../core/utils.js";
-import { canEdit, canWorkInProject, canManageProjectMeta, projectMembers } from "../core/permissions.js";
+import React, { memo, useEffect, useMemo, useState } from "react";
+import {
+  T, PROJECT_STATUSES, TASK_STATUSES, CONTENT_STATUSES, PLAN_STATUSES,
+  CALL_STATUSES, PRIORITIES, PLATFORMS, FORMATS, getCurrentMonthId, getMonthLabel,
+} from "../core/constants.js";
+import { toMoney, isoNow, makeId, indexById, calcProjectProgress } from "../core/utils.js";
+import { canWorkInProject, canManageProjectMeta, projectMembers } from "../core/permissions.js";
 import { normalizeComments, createComment, withRecordMeta } from "../core/normalizers.js";
-import { Avatar, Button, Card, PageHeader, Field, Modal, EmptyState, StatusBadge, StatusSelect, PriorityBadge, CircleProgress, StatCard, DataTable, Row, Cell, TeamSelector, CommentThread } from "../components/ui/index.jsx";
+import {
+  Avatar, Button, Card, Field, Modal, EmptyState, StatusBadge,
+  StatusSelect, PriorityBadge, CircleProgress, DataTable, Row, Cell, TeamSelector, CommentThread,
+} from "../components/ui/index.jsx";
 
-export const TasksTab = memo(function TasksTab({ profile, project, employees, editable, onUpdateProject }) {
+const MONTH_SECTIONS = ["Topshiriqlar", "Kontent", "Media plan", "Rejalar", "Aloqalar"];
+const DAY_ROWS = Array.from({ length: 31 }, (_, index) => index + 1);
+const SHEET_INPUT_STYLE = {
+  width: "100%",
+  minWidth: 0,
+  background: T.colors.bg,
+  border: `1px solid ${T.colors.border}`,
+  borderRadius: T.radius.md,
+  padding: "8px 10px",
+  fontSize: 12,
+  color: T.colors.text,
+  fontFamily: T.font,
+  boxSizing: "border-box",
+};
+
+function getMonthList(months) {
+  if (Array.isArray(months) && months.length) return months;
+  const currentMonthId = getCurrentMonthId();
+  return [{ id: currentMonthId, label: getMonthLabel(currentMonthId), status: "active", createdAt: new Date().toISOString() }];
+}
+
+function buildMonthDate(monthId, day) {
+  return `${monthId}-${String(day).padStart(2, "0")}`;
+}
+
+function getRecordDay(record) {
+  const rawDate = String(record?.date || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) return null;
+  const day = Number(rawDate.slice(8, 10));
+  return day >= 1 && day <= 31 ? day : null;
+}
+
+function recordMatchesMonth(record, monthId) {
+  if (!record || !monthId) return false;
+  if (record.monthId) return record.monthId === monthId;
+  if (String(record.date || "").slice(0, 7) === monthId) return true;
+  return false;
+}
+
+function taskMatchesMonth(task, monthId, monthsExist) {
+  if (!monthsExist) return true;
+  if (task.monthId) return task.monthId === monthId;
+  if (String(task.start || "").slice(0, 7) === monthId) return true;
+  if (String(task.deadline || "").slice(0, 7) === monthId) return true;
+  return false;
+}
+
+function monthScopedTasks(tasks, monthId, monthsExist) {
+  return (tasks || []).filter((task) => taskMatchesMonth(task, monthId, monthsExist));
+}
+
+function monthScopedCount(items, monthId) {
+  return (items || []).filter((item) => recordMatchesMonth(item, monthId)).length;
+}
+
+function buildMonthStats(project, monthId) {
+  const monthsExist = Array.isArray(project.months) && project.months.length > 0;
+  const scopedTasks = monthScopedTasks(project.tasks || [], monthId, monthsExist);
+  const doneTasks = scopedTasks.filter((task) => task.status === "Bajarildi").length;
+  const progress = scopedTasks.length ? Math.round((doneTasks / scopedTasks.length) * 100) : 0;
+  return {
+    progress,
+    doneTasks,
+    totalTasks: scopedTasks.length,
+    contentCount: monthScopedCount(project.contentPlan, monthId),
+    mediaCount: monthScopedCount(project.mediaPlan, monthId),
+    plansCount: monthScopedCount(project.plans?.daily || [], monthId),
+    callsCount: monthScopedCount(project.calls, monthId),
+  };
+}
+
+function TextCellInput({ value, onChange, disabled, placeholder = "" }) {
+  return <input type="text" value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} placeholder={placeholder} style={SHEET_INPUT_STYLE} />;
+}
+
+function NumberCellInput({ value, onChange, disabled, placeholder = "" }) {
+  return <input type="number" value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} placeholder={placeholder} style={SHEET_INPUT_STYLE} />;
+}
+
+function SelectCellInput({ value, onChange, disabled, options }) {
+  return (
+    <select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} style={SHEET_INPUT_STYLE}>
+      {options.map((option) => (
+        typeof option === "object"
+          ? <option key={option.value} value={option.value}>{option.label}</option>
+          : <option key={option} value={option}>{option}</option>
+      ))}
+    </select>
+  );
+}
+
+const MonthWorkspaceCards = memo(function MonthWorkspaceCards({ project, selectedMonthId, onSelectMonth, onCreateMonth, editable }) {
+  const months = getMonthList(project.months);
+  const employeeCount = Array.isArray(project.teamIds) ? project.teamIds.length : 0;
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16, marginBottom: 20 }}>
+      {months.map((month) => {
+        const active = month.id === selectedMonthId;
+        const stats = buildMonthStats(project, month.id);
+        const progressColor = stats.progress >= 75 ? T.colors.green : stats.progress >= 40 ? T.colors.accent : T.colors.orange;
+        return (
+          <Card
+            key={month.id}
+            onClick={() => onSelectMonth(month.id)}
+            style={{
+              borderColor: active ? T.colors.accent : T.colors.border,
+              boxShadow: active ? T.shadow.md : T.shadow.sm,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>{month.label || getMonthLabel(month.id)}</div>
+                <div style={{ marginTop: 2, fontSize: 12, color: T.colors.textSecondary }}>{month.status === "active" ? "Faol workspace" : "Arxiv workspace"}</div>
+              </div>
+              <span style={{ background: active ? T.colors.accentSoft : T.colors.borderLight, color: active ? T.colors.accent : T.colors.textSecondary, borderRadius: T.radius.full, padding: "6px 10px", fontSize: 12, fontWeight: 800 }}>
+                {month.status === "active" ? "🟢 Faol" : "📦 Arxiv"}
+              </span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 14, marginBottom: 14 }}>
+              <div style={{ position: "relative", flexShrink: 0 }}>
+                <CircleProgress pct={stats.progress} size={72} stroke={7} color={progressColor} />
+                <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: progressColor }}>{stats.progress}%</span>
+                  <span style={{ fontSize: 10, color: T.colors.textTertiary }}>{stats.doneTasks}/{stats.totalTasks}</span>
+                </div>
+              </div>
+              <div style={{ flex: 1 }}>
+                <StatusBadge value={project.status} />
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+                  {MONTH_SECTIONS.map((label) => (
+                    <span key={label} style={{ padding: "5px 9px", borderRadius: T.radius.full, background: T.colors.borderLight, color: T.colors.textSecondary, fontSize: 11, fontWeight: 700 }}>
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, marginBottom: 12 }}>
+              {[
+                { label: "Task", value: stats.totalTasks, color: T.colors.accent },
+                { label: "Kontent", value: stats.contentCount, color: T.colors.green },
+                { label: "Media", value: stats.mediaCount, color: T.colors.orange },
+                { label: "Reja", value: stats.plansCount + stats.callsCount, color: T.colors.purple },
+              ].map((item) => (
+                <div key={item.label} style={{ background: T.colors.borderLight, borderRadius: T.radius.lg, padding: "10px 8px", textAlign: "center" }}>
+                  <div style={{ fontSize: 17, fontWeight: 900, color: item.color }}>{item.value}</div>
+                  <div style={{ marginTop: 2, fontSize: 11, color: T.colors.textSecondary }}>{item.label}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, paddingTop: 12, borderTop: `1px solid ${T.colors.borderLight}` }}>
+              <span style={{ fontSize: 12, color: T.colors.textSecondary }}>{employeeCount} kishi biriktirilgan</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: active ? T.colors.accent : T.colors.textSecondary }}>{active ? "Ochiq" : "Ochish"}</span>
+            </div>
+          </Card>
+        );
+      })}
+
+      {editable ? (
+        <Card onClick={onCreateMonth} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 250, borderStyle: "dashed" }}>
+          <div style={{ fontSize: 34, color: T.colors.accent, lineHeight: 1 }}>＋</div>
+          <div style={{ marginTop: 12, fontWeight: 800 }}>Yangi oy ochish</div>
+          <div style={{ marginTop: 6, fontSize: 12, color: T.colors.textSecondary, textAlign: "center", maxWidth: 220 }}>
+            Yangi oy workspace yaratiladi va oldingi oylar arxivga o'tadi.
+          </div>
+        </Card>
+      ) : null}
+    </div>
+  );
+});
+
+export const TasksTab = memo(function TasksTab({ profile, project, employees, selectedMonthId, editable, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
   const assignableEmployees = projectMembers(project, employees);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
-  const months = Array.isArray(project.months) ? project.months : [];
-  const [selectedMonthId, setSelectedMonthId] = useState(getCurrentMonthId());
+  const monthsExist = Array.isArray(project.months) && project.months.length > 0;
   const [showLegacyTasks, setShowLegacyTasks] = useState(false);
   const [draft, setDraft] = useState({
     name: "",
@@ -22,25 +199,10 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, ed
     comments: [],
   });
   const [editingTask, setEditingTask] = useState("");
-  const monthsExist = months.length > 0;
-  const filteredTasks = monthsExist
-    ? project.tasks.filter((task) => task.monthId === selectedMonthId)
-    : project.tasks;
+  const filteredTasks = monthScopedTasks(project.tasks || [], selectedMonthId, monthsExist);
   const legacyTasks = monthsExist
-    ? project.tasks.filter((task) => !task.monthId)
+    ? (project.tasks || []).filter((task) => !task.monthId && !taskMatchesMonth(task, selectedMonthId, true))
     : [];
-
-  useEffect(() => {
-    if (!monthsExist) {
-      setSelectedMonthId(getCurrentMonthId());
-      return;
-    }
-    const activeMonth = months.find((month) => month.status === "active")?.id || months[0]?.id || getCurrentMonthId();
-    setSelectedMonthId((current) => {
-      if (months.some((month) => month.id === current)) return current;
-      return activeMonth;
-    });
-  }, [monthsExist, months]);
 
   function resetForm() {
     setDraft({
@@ -63,7 +225,7 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, ed
   function saveTask() {
     if (!draft.name?.trim()) return;
     const tasks = editingTask
-      ? project.tasks.map((task) => (task.id === editingTask ? withRecordMeta({ ...task, ...draft }, profile) : task))
+      ? project.tasks.map((task) => (task.id === editingTask ? withRecordMeta({ ...task, ...draft, monthId: draft.monthId || selectedMonthId }, profile) : task))
       : [...project.tasks, withRecordMeta({ ...draft, id: makeId("task"), monthId: selectedMonthId }, profile)];
     onUpdateProject({ ...project, tasks }, { notifyText: `Task yangilandi: ${draft.name}`, auditText: `Task saqlandi: ${draft.name}`, page: "projects" });
     resetForm();
@@ -91,23 +253,6 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, ed
   function deleteTask(taskId) {
     if (!window.confirm("Task o'chirilsinmi?")) return;
     onUpdateProject({ ...project, tasks: project.tasks.filter((task) => task.id !== taskId) }, { notifyText: "Task o'chirildi", auditText: "Task o'chirildi", page: "projects" });
-  }
-
-  function openNewMonth() {
-    const currentMonthId = getCurrentMonthId();
-    if (months.some((month) => month.id === currentMonthId)) {
-      setSelectedMonthId(currentMonthId);
-      return;
-    }
-    const nextMonths = [
-      ...months.map((month) => ({ ...month, status: "archived" })),
-      { id: currentMonthId, label: getMonthLabel(currentMonthId), status: "active", createdAt: new Date().toISOString() },
-    ];
-    setSelectedMonthId(currentMonthId);
-    onUpdateProject(
-      { ...project, months: nextMonths },
-      { notifyText: `Yangi oy ochildi: ${getMonthLabel(currentMonthId)}`, auditText: `Task workspace yangi oyga o'tdi: ${getMonthLabel(currentMonthId)}`, page: "projects" }
-    );
   }
 
   function renderTaskRows(tasks) {
@@ -144,36 +289,12 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, ed
 
   return (
     <Card>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <div style={{ fontSize: 18, fontWeight: 900 }}>Topshiriqlar</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 900 }}>Topshiriqlar</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: T.colors.textSecondary }}>{getMonthLabel(selectedMonthId)} workspace</div>
+        </div>
         {sectionEditable ? <Button onClick={resetForm}>Yangi task</Button> : null}
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
-        {(monthsExist ? months : [{ id: getCurrentMonthId(), label: getMonthLabel(getCurrentMonthId()), status: "active" }]).map((month) => {
-          const active = month.id === selectedMonthId;
-          return (
-            <button
-              key={month.id}
-              type="button"
-              onClick={() => setSelectedMonthId(month.id)}
-              style={{
-                border: `1px solid ${active ? T.colors.accent : T.colors.border}`,
-                background: active ? T.colors.accentSoft : T.colors.bg,
-                color: active ? T.colors.accent : T.colors.textSecondary,
-                borderRadius: T.radius.full,
-                padding: "7px 12px",
-                fontFamily: T.font,
-                fontSize: 12,
-                fontWeight: 800,
-                cursor: "pointer",
-              }}
-            >
-              {month.status === "active" ? "🟢" : "📦"} {month.label || getMonthLabel(month.id)}
-            </button>
-          );
-        })}
-        {sectionEditable ? <Button variant="secondary" onClick={openNewMonth}>+ Yangi oy</Button> : null}
       </div>
 
       {sectionEditable ? (
@@ -198,7 +319,7 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, ed
           {renderTaskRows(filteredTasks)}
         </DataTable>
       ) : (
-        <EmptyState title="Tasklar yo'q" desc="Yangi task qo'shilgach shu yerda ko'rinadi." />
+        <EmptyState title="Tasklar yo'q" desc={`${getMonthLabel(selectedMonthId)} uchun task yozuvlari shu yerda ko'rinadi.`} />
       )}
 
       {monthsExist && legacyTasks.length ? (
@@ -223,466 +344,349 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, ed
   );
 });
 
-export const ContentPlanTab = memo(function ContentPlanTab({ profile, project, employees, editable, onUpdateProject }) {
+function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
   const assignableEmployees = projectMembers(project, employees);
-  const employeeMap = useMemo(() => indexById(employees), [employees]);
-  const [draft, setDraft] = useState({ date: "", platform: "Instagram", format: "Post", topic: "", caption: "", ownerId: assignableEmployees[0]?.id || "", status: "Rejalashtirildi", note: "", comments: [] });
-  const [editingId, setEditingId] = useState("");
+  const defaultOwnerId = assignableEmployees[0]?.id || "";
+  const contentItems = project.contentPlan || [];
+  const [rows, setRows] = useState([]);
 
-  function reset() {
-    setDraft({ date: "", platform: "Instagram", format: "Post", topic: "", caption: "", ownerId: assignableEmployees[0]?.id || "", status: "Rejalashtirildi", note: "", comments: [] });
-    setEditingId("");
+  useEffect(() => {
+    const scoped = contentItems.filter((item) => recordMatchesMonth(item, selectedMonthId));
+    setRows(DAY_ROWS.map((day) => {
+      const existing = scoped.find((item) => getRecordDay(item) === day) || null;
+      return {
+        day,
+        existing,
+        platform: existing?.platform || "Instagram",
+        format: existing?.format || "Post",
+        topic: existing?.topic || "",
+        caption: existing?.caption || "",
+        ownerId: existing?.ownerId || defaultOwnerId,
+        status: existing?.status || "Rejalashtirildi",
+        note: existing?.note || "",
+      };
+    }));
+  }, [contentItems, selectedMonthId, defaultOwnerId]);
+
+  function updateRow(day, key, value) {
+    setRows((current) => current.map((row) => (row.day === day ? { ...row, [key]: value } : row)));
   }
 
-  function save() {
-    if (!draft.topic.trim()) return;
-    const contentPlan = editingId
-      ? project.contentPlan.map((item) => (item.id === editingId ? withRecordMeta({ ...item, ...draft }, profile) : item))
-      : [...project.contentPlan, withRecordMeta({ ...draft, id: makeId("content") }, profile)];
-    onUpdateProject({ ...project, contentPlan }, { notifyText: "Kontent reja yangilandi", auditText: `Kontent saqlandi: ${draft.topic}`, page: "projects" });
-    reset();
-  }
-
-  function updateStatus(id, status) {
-    onUpdateProject(
-      { ...project, contentPlan: project.contentPlan.map((item) => (item.id === id ? { ...item, status } : item)) },
-      { notifyText: "Kontent holati o'zgardi", auditText: `Kontent statusi o'zgardi: ${status}`, page: "projects" }
-    );
-  }
-
-  function addComment(id, text) {
-    onUpdateProject(
-      {
-        ...project,
-        contentPlan: project.contentPlan.map((item) =>
-          item.id === id ? { ...item, comments: [...normalizeComments(item.comments), createComment(text, profile)] } : item
-        ),
-      },
-      { notifyText: "Kontentga izoh qo'shildi", auditText: "Kontentga izoh qo'shildi", page: "projects" }
-    );
-  }
-
-  function remove(id) {
-    if (!window.confirm("Kontent yozuvi o'chirilsinmi?")) return;
-    onUpdateProject({ ...project, contentPlan: project.contentPlan.filter((item) => item.id !== id) }, { notifyText: "Kontent yozuvi o'chirildi", auditText: "Kontent yozuvi o'chirildi", page: "projects" });
+  function saveRows() {
+    const otherItems = contentItems.filter((item) => !recordMatchesMonth(item, selectedMonthId));
+    const nextItems = rows
+      .filter((row) => row.topic.trim() || row.caption.trim() || row.note.trim())
+      .map((row) => withRecordMeta({
+        ...(row.existing || {}),
+        id: row.existing?.id || makeId("content"),
+        date: buildMonthDate(selectedMonthId, row.day),
+        monthId: selectedMonthId,
+        platform: row.platform,
+        format: row.format,
+        topic: row.topic.trim(),
+        caption: row.caption.trim(),
+        ownerId: row.ownerId || defaultOwnerId,
+        status: row.status,
+        note: row.note.trim(),
+        comments: normalizeComments(row.existing?.comments),
+      }, profile));
+    onUpdateProject({ ...project, contentPlan: [...otherItems, ...nextItems] }, { notifyText: "Kontent reja saqlandi", auditText: `Kontent jadvali saqlandi: ${getMonthLabel(selectedMonthId)}`, page: "projects" });
   }
 
   return (
     <Card>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <div style={{ fontSize: 18, fontWeight: 900 }}>Kontent reja</div>
-        {sectionEditable ? <Button onClick={reset}>Yangi kontent</Button> : null}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 900 }}>Kontent reja</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: T.colors.textSecondary }}>{getMonthLabel(selectedMonthId)} uchun 31 kunlik jadval</div>
+        </div>
+        {sectionEditable ? <Button onClick={saveRows}>Jadvalni saqlash</Button> : null}
       </div>
-
-      {sectionEditable ? (
-        <Card style={{ background: T.colors.bg, marginBottom: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
-            <Field label="Sana" type="date" value={draft.date} onChange={(value) => setDraft((prev) => ({ ...prev, date: value }))} />
-            <Field label="Platforma" value={draft.platform} onChange={(value) => setDraft((prev) => ({ ...prev, platform: value }))} options={PLATFORMS} />
-            <Field label="Format" value={draft.format} onChange={(value) => setDraft((prev) => ({ ...prev, format: value }))} options={FORMATS} />
-            <Field label="Mavzu" value={draft.topic} onChange={(value) => setDraft((prev) => ({ ...prev, topic: value }))} />
-            <Field label="Caption" value={draft.caption} onChange={(value) => setDraft((prev) => ({ ...prev, caption: value }))} />
-            <Field label="Mas'ul" value={draft.ownerId} onChange={(value) => setDraft((prev) => ({ ...prev, ownerId: value }))} options={assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))} />
-            <Field label="Holat" value={draft.status} onChange={(value) => setDraft((prev) => ({ ...prev, status: value }))} options={CONTENT_STATUSES} />
-            <Field label="Izoh" value={draft.note} onChange={(value) => setDraft((prev) => ({ ...prev, note: value }))} />
-          </div>
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14 }}>
-            {editingId ? <Button variant="secondary" onClick={reset}>Bekor</Button> : null}
-            <Button onClick={save}>{editingId ? "Yangilash" : "Qo'shish"}</Button>
-          </div>
-        </Card>
-      ) : null}
-
-      {project.contentPlan.length ? (
-        <DataTable columns={["Sana", "Platforma", "Format", "Mavzu", "Mas'ul", "Holat", "Izoh", "Komment", "Amal"]}>
-          {project.contentPlan.map((item) => {
-            const owner = employeeMap[item.ownerId];
-            const canChangeStatus = sectionEditable;
-            return (
-              <Row key={item.id}>
-                <Cell>{item.date || "-"}</Cell>
-                <Cell>{item.platform}</Cell>
-                <Cell>{item.format}</Cell>
-                <Cell style={{ fontWeight: 800 }}>{item.topic}</Cell>
-                <Cell>{owner?.name || "Biriktirilmagan"}</Cell>
-                <Cell>
-                  <StatusSelect value={item.status} options={CONTENT_STATUSES} onChange={canChangeStatus ? (status) => updateStatus(item.id, status) : null} disabled={!canChangeStatus} />
-                </Cell>
-                <Cell style={{ color: T.colors.textMuted }}>{item.note || "-"}</Cell>
-                <Cell>
-                  <CommentThread comments={item.comments} onAddComment={sectionEditable ? (text) => addComment(item.id, text) : null} placeholder="Kontent izohi..." />
-                </Cell>
-                <Cell>
-                  {sectionEditable ? (
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <Button variant="secondary" onClick={() => { setEditingId(item.id); setDraft({ ...item }); }} style={{ padding: "7px 10px" }}>Tahrirlash</Button>
-                      <Button variant="danger" onClick={() => remove(item.id)} style={{ padding: "7px 10px" }}>O'chirish</Button>
-                    </div>
-                  ) : (
-                    "-"
-                  )}
-                </Cell>
-              </Row>
-            );
-          })}
-        </DataTable>
-      ) : (
-        <EmptyState title="Kontent reja yo'q" desc="Kontent yozuvlari shu yerda boshqariladi." />
-      )}
+      <DataTable columns={["Kun", "Platforma", "Format", "Mavzu", "Caption", "Mas'ul", "Holat", "Izoh"]}>
+        {rows.map((row) => (
+          <Row key={row.day}>
+            <Cell style={{ fontWeight: 800 }}>{String(row.day).padStart(2, "0")}</Cell>
+            <Cell><SelectCellInput value={row.platform} onChange={(value) => updateRow(row.day, "platform", value)} disabled={!sectionEditable} options={PLATFORMS} /></Cell>
+            <Cell><SelectCellInput value={row.format} onChange={(value) => updateRow(row.day, "format", value)} disabled={!sectionEditable} options={FORMATS} /></Cell>
+            <Cell><TextCellInput value={row.topic} onChange={(value) => updateRow(row.day, "topic", value)} disabled={!sectionEditable} placeholder="Mavzu" /></Cell>
+            <Cell><TextCellInput value={row.caption} onChange={(value) => updateRow(row.day, "caption", value)} disabled={!sectionEditable} placeholder="Caption" /></Cell>
+            <Cell><SelectCellInput value={row.ownerId} onChange={(value) => updateRow(row.day, "ownerId", value)} disabled={!sectionEditable} options={[{ value: "", label: "Tanlanmagan" }, ...assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]} /></Cell>
+            <Cell><SelectCellInput value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={CONTENT_STATUSES} /></Cell>
+            <Cell><TextCellInput value={row.note} onChange={(value) => updateRow(row.day, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
+          </Row>
+        ))}
+      </DataTable>
     </Card>
   );
-});
+}
 
-export const MediaPlanTab = memo(function MediaPlanTab({ profile, project, employees, editable, onUpdateProject }) {
+function MonthlyMediaSheet({ profile, project, employees, selectedMonthId, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
   const assignableEmployees = projectMembers(project, employees);
-  const employeeMap = useMemo(() => indexById(employees), [employees]);
-  const [draft, setDraft] = useState({ date: "", type: "Post", platform: "Instagram", format: "Post", ownerId: assignableEmployees[0]?.id || "", budget: "", status: "Rejalashtirildi", note: "", comments: [] });
-  const [editingId, setEditingId] = useState("");
+  const defaultOwnerId = assignableEmployees[0]?.id || "";
+  const mediaItems = project.mediaPlan || [];
+  const [rows, setRows] = useState([]);
 
-  function reset() {
-    setDraft({ date: "", type: "Post", platform: "Instagram", format: "Post", ownerId: assignableEmployees[0]?.id || "", budget: "", status: "Rejalashtirildi", note: "", comments: [] });
-    setEditingId("");
+  useEffect(() => {
+    const scoped = mediaItems.filter((item) => recordMatchesMonth(item, selectedMonthId));
+    setRows(DAY_ROWS.map((day) => {
+      const existing = scoped.find((item) => getRecordDay(item) === day) || null;
+      return {
+        day,
+        existing,
+        type: existing?.type || "Post",
+        platform: existing?.platform || "Instagram",
+        format: existing?.format || "Post",
+        ownerId: existing?.ownerId || defaultOwnerId,
+        budget: existing?.budget ? String(existing.budget) : "",
+        status: existing?.status || "Rejalashtirildi",
+        note: existing?.note || "",
+      };
+    }));
+  }, [mediaItems, selectedMonthId, defaultOwnerId]);
+
+  function updateRow(day, key, value) {
+    setRows((current) => current.map((row) => (row.day === day ? { ...row, [key]: value } : row)));
   }
 
-  function save() {
-    const mediaPlan = editingId
-      ? project.mediaPlan.map((item) => (item.id === editingId ? withRecordMeta({ ...item, ...draft, budget: Number(draft.budget || 0) }, profile) : item))
-      : [...project.mediaPlan, withRecordMeta({ ...draft, id: makeId("media"), budget: Number(draft.budget || 0) }, profile)];
-    onUpdateProject({ ...project, mediaPlan }, { notifyText: "Media plan yangilandi", auditText: "Media plan saqlandi", page: "projects" });
-    reset();
-  }
-
-  function updateStatus(id, status) {
-    onUpdateProject(
-      { ...project, mediaPlan: project.mediaPlan.map((item) => (item.id === id ? { ...item, status } : item)) },
-      { notifyText: "Media plan holati o'zgardi", auditText: `Media plan statusi o'zgardi: ${status}`, page: "projects" }
-    );
-  }
-
-  function addComment(id, text) {
-    onUpdateProject(
-      {
-        ...project,
-        mediaPlan: project.mediaPlan.map((item) =>
-          item.id === id ? { ...item, comments: [...normalizeComments(item.comments), createComment(text, profile)] } : item
-        ),
-      },
-      { notifyText: "Mediaplan izohi qo'shildi", auditText: "Mediaplan izohi qo'shildi", page: "projects" }
-    );
-  }
-
-  function remove(id) {
-    if (!window.confirm("Media plan yozuvi o'chirilsinmi?")) return;
-    onUpdateProject({ ...project, mediaPlan: project.mediaPlan.filter((item) => item.id !== id) }, { notifyText: "Media plan yozuvi o'chirildi", auditText: "Media plan yozuvi o'chirildi", page: "projects" });
+  function saveRows() {
+    const otherItems = mediaItems.filter((item) => !recordMatchesMonth(item, selectedMonthId));
+    const nextItems = rows
+      .filter((row) => Number(row.budget || 0) > 0 || row.note.trim())
+      .map((row) => withRecordMeta({
+        ...(row.existing || {}),
+        id: row.existing?.id || makeId("media"),
+        date: buildMonthDate(selectedMonthId, row.day),
+        monthId: selectedMonthId,
+        type: row.type,
+        platform: row.platform,
+        format: row.format,
+        ownerId: row.ownerId || defaultOwnerId,
+        budget: Number(row.budget || 0),
+        status: row.status,
+        note: row.note.trim(),
+        comments: normalizeComments(row.existing?.comments),
+      }, profile));
+    onUpdateProject({ ...project, mediaPlan: [...otherItems, ...nextItems] }, { notifyText: "Media plan saqlandi", auditText: `Media plan jadvali saqlandi: ${getMonthLabel(selectedMonthId)}`, page: "projects" });
   }
 
   return (
     <Card>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <div style={{ fontSize: 18, fontWeight: 900 }}>Media plan</div>
-        {sectionEditable ? <Button onClick={reset}>Yangi yozuv</Button> : null}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 900 }}>Media plan</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: T.colors.textSecondary }}>{getMonthLabel(selectedMonthId)} uchun 31 kunlik jadval</div>
+        </div>
+        {sectionEditable ? <Button onClick={saveRows}>Jadvalni saqlash</Button> : null}
       </div>
-
-      {sectionEditable ? (
-        <Card style={{ background: T.colors.bg, marginBottom: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
-            <Field label="Sana" type="date" value={draft.date} onChange={(value) => setDraft((prev) => ({ ...prev, date: value }))} />
-            <Field label="Tur" value={draft.type} onChange={(value) => setDraft((prev) => ({ ...prev, type: value }))} options={FORMATS} />
-            <Field label="Platforma" value={draft.platform} onChange={(value) => setDraft((prev) => ({ ...prev, platform: value }))} options={PLATFORMS} />
-            <Field label="Format" value={draft.format} onChange={(value) => setDraft((prev) => ({ ...prev, format: value }))} options={FORMATS} />
-            <Field label="Mas'ul" value={draft.ownerId} onChange={(value) => setDraft((prev) => ({ ...prev, ownerId: value }))} options={assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))} />
-            <Field label="Byudjet" type="number" value={draft.budget} onChange={(value) => setDraft((prev) => ({ ...prev, budget: value }))} />
-            <Field label="Holat" value={draft.status} onChange={(value) => setDraft((prev) => ({ ...prev, status: value }))} options={PLAN_STATUSES} />
-            <Field label="Izoh" value={draft.note} onChange={(value) => setDraft((prev) => ({ ...prev, note: value }))} />
-          </div>
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14 }}>
-            {editingId ? <Button variant="secondary" onClick={reset}>Bekor</Button> : null}
-            <Button onClick={save}>{editingId ? "Yangilash" : "Qo'shish"}</Button>
-          </div>
-        </Card>
-      ) : null}
-
-      {project.mediaPlan.length ? (
-        <DataTable columns={["Sana", "Tur", "Platforma", "Mas'ul", "Byudjet", "Holat", "Izoh", "Komment", "Amal"]}>
-          {project.mediaPlan.map((item) => {
-            const owner = employeeMap[item.ownerId];
-            const canChangeStatus = sectionEditable;
-            return (
-              <Row key={item.id}>
-                <Cell>{item.date || "-"}</Cell>
-                <Cell>{item.type}</Cell>
-                <Cell>{item.platform}</Cell>
-                <Cell>{owner?.name || "Biriktirilmagan"}</Cell>
-                <Cell>{toMoney(item.budget)} so'm</Cell>
-                <Cell>
-                  <StatusSelect value={item.status} options={PLAN_STATUSES} onChange={canChangeStatus ? (status) => updateStatus(item.id, status) : null} disabled={!canChangeStatus} />
-                </Cell>
-                <Cell style={{ color: T.colors.textMuted }}>{item.note || "-"}</Cell>
-                <Cell>
-                  <CommentThread comments={item.comments} onAddComment={sectionEditable ? (text) => addComment(item.id, text) : null} placeholder="Mediaplan izohi..." />
-                </Cell>
-                <Cell>
-                  {sectionEditable ? (
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <Button variant="secondary" onClick={() => { setEditingId(item.id); setDraft({ ...item, budget: String(item.budget || "") }); }} style={{ padding: "7px 10px" }}>Tahrirlash</Button>
-                      <Button variant="danger" onClick={() => remove(item.id)} style={{ padding: "7px 10px" }}>O'chirish</Button>
-                    </div>
-                  ) : (
-                    "-"
-                  )}
-                </Cell>
-              </Row>
-            );
-          })}
-        </DataTable>
-      ) : (
-        <EmptyState title="Media plan yo'q" desc="Byudjet va media yozuvlarini shu yerda qo'shing." />
-      )}
+      <DataTable columns={["Kun", "Tur", "Platforma", "Format", "Mas'ul", "Byudjet", "Holat", "Izoh"]}>
+        {rows.map((row) => (
+          <Row key={row.day}>
+            <Cell style={{ fontWeight: 800 }}>{String(row.day).padStart(2, "0")}</Cell>
+            <Cell><SelectCellInput value={row.type} onChange={(value) => updateRow(row.day, "type", value)} disabled={!sectionEditable} options={FORMATS} /></Cell>
+            <Cell><SelectCellInput value={row.platform} onChange={(value) => updateRow(row.day, "platform", value)} disabled={!sectionEditable} options={PLATFORMS} /></Cell>
+            <Cell><SelectCellInput value={row.format} onChange={(value) => updateRow(row.day, "format", value)} disabled={!sectionEditable} options={FORMATS} /></Cell>
+            <Cell><SelectCellInput value={row.ownerId} onChange={(value) => updateRow(row.day, "ownerId", value)} disabled={!sectionEditable} options={[{ value: "", label: "Tanlanmagan" }, ...assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]} /></Cell>
+            <Cell><NumberCellInput value={row.budget} onChange={(value) => updateRow(row.day, "budget", value)} disabled={!sectionEditable} placeholder="0" /></Cell>
+            <Cell><SelectCellInput value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={PLAN_STATUSES} /></Cell>
+            <Cell><TextCellInput value={row.note} onChange={(value) => updateRow(row.day, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
+          </Row>
+        ))}
+      </DataTable>
     </Card>
   );
-});
+}
 
-export const PlansTab = memo(function PlansTab({ profile, project, editable, onUpdateProject }) {
+function MonthlyPlansSheet({ profile, project, selectedMonthId, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
-  const [planType, setPlanType] = useState("daily");
-  const [draft, setDraft] = useState({ title: "", status: "Rejalashtirildi", taskId: "", note: "", date: "", week: "", month: "", comments: [] });
-  const [editingId, setEditingId] = useState("");
-  const currentItems = project.plans?.[planType] || [];
+  const dailyPlans = project.plans?.daily || [];
+  const taskOptions = [{ value: "", label: "Tanlanmagan" }, ...monthScopedTasks(project.tasks || [], selectedMonthId, Array.isArray(project.months) && project.months.length > 0).map((task) => ({ value: task.id, label: task.name }))];
+  const [rows, setRows] = useState([]);
 
-  function reset() {
-    setDraft({ title: "", status: "Rejalashtirildi", taskId: "", note: "", date: "", week: "", month: "", comments: [] });
-    setEditingId("");
+  useEffect(() => {
+    const scoped = dailyPlans.filter((item) => recordMatchesMonth(item, selectedMonthId));
+    setRows(DAY_ROWS.map((day) => {
+      const existing = scoped.find((item) => getRecordDay(item) === day) || null;
+      return {
+        day,
+        existing,
+        title: existing?.title || "",
+        taskId: existing?.taskId || "",
+        status: existing?.status || "Rejalashtirildi",
+        note: existing?.note || "",
+      };
+    }));
+  }, [dailyPlans, selectedMonthId]);
+
+  function updateRow(day, key, value) {
+    setRows((current) => current.map((row) => (row.day === day ? { ...row, [key]: value } : row)));
   }
 
-  function save() {
-    if (!draft.title.trim()) return;
-    const list = editingId
-      ? currentItems.map((item) => (item.id === editingId ? withRecordMeta({ ...item, ...draft }, profile) : item))
-      : [...currentItems, withRecordMeta({ ...draft, id: makeId("plan") }, profile)];
+  function saveRows() {
+    const otherItems = dailyPlans.filter((item) => !recordMatchesMonth(item, selectedMonthId));
+    const nextItems = rows
+      .filter((row) => row.title.trim() || row.note.trim() || row.taskId)
+      .map((row) => withRecordMeta({
+        ...(row.existing || {}),
+        id: row.existing?.id || makeId("plan"),
+        date: buildMonthDate(selectedMonthId, row.day),
+        monthId: selectedMonthId,
+        title: row.title.trim(),
+        taskId: row.taskId,
+        status: row.status,
+        note: row.note.trim(),
+        comments: normalizeComments(row.existing?.comments),
+      }, profile));
     onUpdateProject(
-      { ...project, plans: { ...project.plans, [planType]: list } },
-      { notifyText: "Reja yangilandi", auditText: `Reja saqlandi: ${draft.title}`, page: "projects" }
-    );
-    reset();
-  }
-
-  function updateStatus(id, status) {
-    onUpdateProject(
-      { ...project, plans: { ...project.plans, [planType]: currentItems.map((item) => (item.id === id ? { ...item, status } : item)) } },
-      { notifyText: "Reja holati o'zgardi", auditText: `Reja statusi o'zgardi: ${status}`, page: "projects" }
-    );
-  }
-
-  function addComment(id, text) {
-    onUpdateProject(
-      {
-        ...project,
-        plans: {
-          ...project.plans,
-          [planType]: currentItems.map((item) =>
-            item.id === id ? { ...item, comments: [...normalizeComments(item.comments), createComment(text, profile)] } : item
-          ),
-        },
-      },
-      { notifyText: "Rejaga izoh qo'shildi", auditText: "Rejaga izoh qo'shildi", page: "projects" }
-    );
-  }
-
-  function remove(id) {
-    if (!window.confirm("Reja o'chirilsinmi?")) return;
-    onUpdateProject(
-      { ...project, plans: { ...project.plans, [planType]: currentItems.filter((item) => item.id !== id) } },
-      { notifyText: "Reja o'chirildi", auditText: "Reja o'chirildi", page: "projects" }
+      { ...project, plans: { ...project.plans, daily: [...otherItems, ...nextItems] } },
+      { notifyText: "Rejalar saqlandi", auditText: `Rejalar jadvali saqlandi: ${getMonthLabel(selectedMonthId)}`, page: "projects" }
     );
   }
 
   return (
     <Card>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {[
-            { id: "daily", label: "Kunlik" },
-            { id: "weekly", label: "Haftalik" },
-            { id: "monthly", label: "Oylik" },
-          ].map((tab) => (
-            <Button key={tab.id} variant={planType === tab.id ? "primary" : "secondary"} onClick={() => setPlanType(tab.id)} style={{ padding: "8px 12px" }}>
-              {tab.label}
-            </Button>
-          ))}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 900 }}>Rejalar</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: T.colors.textSecondary }}>{getMonthLabel(selectedMonthId)} uchun 31 kunlik jadval</div>
         </div>
-        {sectionEditable ? <Button onClick={reset}>Yangi reja</Button> : null}
+        {sectionEditable ? <Button onClick={saveRows}>Jadvalni saqlash</Button> : null}
       </div>
-
-      {sectionEditable ? (
-        <Card style={{ background: T.colors.bg, marginBottom: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
-            {planType === "daily" ? <Field label="Sana" type="date" value={draft.date} onChange={(value) => setDraft((prev) => ({ ...prev, date: value }))} /> : null}
-            {planType === "weekly" ? <Field label="Hafta" value={draft.week} onChange={(value) => setDraft((prev) => ({ ...prev, week: value }))} placeholder="Mar 11 - Mar 17" /> : null}
-            {planType === "monthly" ? <Field label="Oy" value={draft.month} onChange={(value) => setDraft((prev) => ({ ...prev, month: value }))} placeholder="Mart 2026" /> : null}
-            <Field label="Sarlavha" value={draft.title} onChange={(value) => setDraft((prev) => ({ ...prev, title: value }))} />
-            <Field label="Holat" value={draft.status} onChange={(value) => setDraft((prev) => ({ ...prev, status: value }))} options={PLAN_STATUSES} />
-            <Field label="Bog'liq task" value={draft.taskId} onChange={(value) => setDraft((prev) => ({ ...prev, taskId: value }))} options={[{ value: "", label: "Tanlanmagan" }, ...project.tasks.map((task) => ({ value: task.id, label: task.name }))]} />
-            <Field label="Izoh" value={draft.note} onChange={(value) => setDraft((prev) => ({ ...prev, note: value }))} />
-          </div>
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14 }}>
-            {editingId ? <Button variant="secondary" onClick={reset}>Bekor</Button> : null}
-            <Button onClick={save}>{editingId ? "Yangilash" : "Qo'shish"}</Button>
-          </div>
-        </Card>
-      ) : null}
-
-      {currentItems.length ? (
-        <div style={{ display: "grid", gap: 10 }}>
-          {currentItems.map((item) => {
-            const relatedTask = project.tasks.find((task) => task.id === item.taskId);
-            return (
-              <Card key={item.id} style={{ padding: 16, background: T.colors.bg }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 900 }}>{item.title}</div>
-                    <div style={{ marginTop: 6, color: T.colors.textMuted, fontSize: 13 }}>
-                      {item.date || item.week || item.month || "Davr kiritilmagan"}
-                      {relatedTask ? ` · Task: ${relatedTask.name}` : ""}
-                      {item.note ? ` · ${item.note}` : ""}
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                    <StatusSelect value={item.status} options={PLAN_STATUSES} onChange={sectionEditable ? (status) => updateStatus(item.id, status) : null} disabled={!sectionEditable} />
-                    {sectionEditable ? <Button variant="secondary" onClick={() => { setEditingId(item.id); setDraft({ ...item }); }} style={{ padding: "7px 10px" }}>Tahrirlash</Button> : null}
-                    {sectionEditable ? <Button variant="danger" onClick={() => remove(item.id)} style={{ padding: "7px 10px" }}>O'chirish</Button> : null}
-                  </div>
-                </div>
-                <div style={{ marginTop: 12 }}>
-                  <CommentThread comments={item.comments} onAddComment={sectionEditable ? (text) => addComment(item.id, text) : null} placeholder="Reja bo'yicha izoh..." />
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      ) : (
-        <EmptyState title="Rejalar yo'q" desc="Kunlik, haftalik va oylik rejalaringiz shu yerda bo'ladi." />
-      )}
+      <DataTable columns={["Kun", "Sarlavha", "Bog'liq task", "Holat", "Izoh"]}>
+        {rows.map((row) => (
+          <Row key={row.day}>
+            <Cell style={{ fontWeight: 800 }}>{String(row.day).padStart(2, "0")}</Cell>
+            <Cell><TextCellInput value={row.title} onChange={(value) => updateRow(row.day, "title", value)} disabled={!sectionEditable} placeholder="Kunlik reja" /></Cell>
+            <Cell><SelectCellInput value={row.taskId} onChange={(value) => updateRow(row.day, "taskId", value)} disabled={!sectionEditable} options={taskOptions} /></Cell>
+            <Cell><SelectCellInput value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={PLAN_STATUSES} /></Cell>
+            <Cell><TextCellInput value={row.note} onChange={(value) => updateRow(row.day, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
+          </Row>
+        ))}
+      </DataTable>
     </Card>
   );
-});
+}
 
-export const CallsTab = memo(function CallsTab({ profile, project, employees, editable, onUpdateProject }) {
+function MonthlyCallsSheet({ profile, project, employees, selectedMonthId, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
   const assignableEmployees = projectMembers(project, employees);
-  const employeeMap = useMemo(() => indexById(employees), [employees]);
-  const [editingId, setEditingId] = useState("");
-  const [draft, setDraft] = useState({ date: "", type: "Call", whoId: assignableEmployees[0]?.id || "", result: "", next: "", status: "Yangi", comments: [] });
+  const defaultWhoId = assignableEmployees[0]?.id || "";
+  const calls = project.calls || [];
+  const [rows, setRows] = useState([]);
 
-  function reset() {
-    setEditingId("");
-    setDraft({ date: "", type: "Call", whoId: assignableEmployees[0]?.id || "", result: "", next: "", status: "Yangi", comments: [] });
+  useEffect(() => {
+    const scoped = calls.filter((item) => recordMatchesMonth(item, selectedMonthId));
+    setRows(DAY_ROWS.map((day) => {
+      const existing = scoped.find((item) => getRecordDay(item) === day) || null;
+      return {
+        day,
+        existing,
+        type: existing?.type || "Call",
+        whoId: existing?.whoId || defaultWhoId,
+        result: existing?.result || "",
+        next: existing?.next || "",
+        status: existing?.status || "Yangi",
+      };
+    }));
+  }, [calls, selectedMonthId, defaultWhoId]);
+
+  function updateRow(day, key, value) {
+    setRows((current) => current.map((row) => (row.day === day ? { ...row, [key]: value } : row)));
   }
 
-  function save() {
-    if (!draft.date && !draft.result && !draft.next) return;
-    const calls = editingId
-      ? project.calls.map((item) => (item.id === editingId ? withRecordMeta({ ...item, ...draft }, profile) : item))
-      : [...project.calls, withRecordMeta({ ...draft, id: makeId("call") }, profile)];
-    onUpdateProject({ ...project, calls }, { notifyText: "Mijoz bilan aloqa saqlandi", auditText: "Mijoz bilan aloqa saqlandi", page: "projects" });
-    reset();
-  }
-
-  function updateStatus(id, status) {
-    onUpdateProject(
-      { ...project, calls: project.calls.map((item) => (item.id === id ? { ...item, status } : item)) },
-      { notifyText: "Aloqa holati yangilandi", auditText: `Aloqa statusi o'zgardi: ${status}`, page: "projects" }
-    );
-  }
-
-  function addComment(id, text) {
-    onUpdateProject(
-      {
-        ...project,
-        calls: project.calls.map((item) =>
-          item.id === id ? { ...item, comments: [...normalizeComments(item.comments), createComment(text, profile)] } : item
-        ),
-      },
-      { notifyText: "Aloqaga izoh qo'shildi", auditText: "Aloqaga izoh qo'shildi", page: "projects" }
-    );
-  }
-
-  function remove(id) {
-    if (!window.confirm("Aloqa yozuvi o'chirilsinmi?")) return;
-    onUpdateProject({ ...project, calls: project.calls.filter((item) => item.id !== id) }, { notifyText: "Aloqa yozuvi o'chirildi", auditText: "Aloqa yozuvi o'chirildi", page: "projects" });
+  function saveRows() {
+    const otherItems = calls.filter((item) => !recordMatchesMonth(item, selectedMonthId));
+    const nextItems = rows
+      .filter((row) => row.result.trim() || row.next.trim())
+      .map((row) => withRecordMeta({
+        ...(row.existing || {}),
+        id: row.existing?.id || makeId("call"),
+        date: buildMonthDate(selectedMonthId, row.day),
+        monthId: selectedMonthId,
+        type: row.type,
+        whoId: row.whoId || defaultWhoId,
+        result: row.result.trim(),
+        next: row.next.trim(),
+        status: row.status,
+        comments: normalizeComments(row.existing?.comments),
+      }, profile));
+    onUpdateProject({ ...project, calls: [...otherItems, ...nextItems] }, { notifyText: "Aloqalar saqlandi", auditText: `Aloqalar jadvali saqlandi: ${getMonthLabel(selectedMonthId)}`, page: "projects" });
   }
 
   return (
     <Card>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
-        <div style={{ fontSize: 18, fontWeight: 900 }}>Mijoz bilan aloqalar</div>
-        {sectionEditable ? <Button onClick={reset}>Yangi aloqa</Button> : null}
-      </div>
-      {sectionEditable ? (
-        <Card style={{ background: T.colors.bg, marginBottom: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
-            <Field label="Sana" type="date" value={draft.date} onChange={(value) => setDraft((prev) => ({ ...prev, date: value }))} />
-            <Field label="Tur" value={draft.type} onChange={(value) => setDraft((prev) => ({ ...prev, type: value }))} options={["Call", "Meeting"]} />
-            <Field label="Kim gaplashdi" value={draft.whoId} onChange={(value) => setDraft((prev) => ({ ...prev, whoId: value }))} options={assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))} />
-            <Field label="Natija" value={draft.result} onChange={(value) => setDraft((prev) => ({ ...prev, result: value }))} />
-            <Field label="Keyingi qadam" value={draft.next} onChange={(value) => setDraft((prev) => ({ ...prev, next: value }))} />
-            <Field label="Holat" value={draft.status} onChange={(value) => setDraft((prev) => ({ ...prev, status: value }))} options={CALL_STATUSES} />
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
-            {editingId ? <Button variant="secondary" onClick={reset}>Bekor</Button> : null}
-            <Button onClick={save}>{editingId ? "Yangilash" : "Qo'shish"}</Button>
-          </div>
-        </Card>
-      ) : null}
-
-      {project.calls.length ? (
-        <div style={{ display: "grid", gap: 10 }}>
-          {project.calls.map((item) => {
-            const person = employeeMap[item.whoId];
-            return (
-              <Card key={item.id} style={{ background: T.colors.bg }}>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-                  <div>
-                    <div style={{ fontWeight: 900 }}>{item.type}</div>
-                    <div style={{ marginTop: 6, color: T.colors.textMuted, fontSize: 13 }}>{item.date || "-"}</div>
-                    <div style={{ marginTop: 8 }}>{person?.name || "Mas'ul ko'rsatilmagan"}</div>
-                    {item.result ? <div style={{ marginTop: 8, color: T.colors.textMuted }}>Natija: {item.result}</div> : null}
-                    {item.next ? <div style={{ marginTop: 4, color: T.colors.accent, fontWeight: 700 }}>Keyingi qadam: {item.next}</div> : null}
-                  </div>
-                  <div style={{ display: "grid", gap: 8, justifyItems: "end" }}>
-                    <StatusSelect value={item.status || "Yangi"} options={CALL_STATUSES} onChange={sectionEditable ? (status) => updateStatus(item.id, status) : null} disabled={!sectionEditable} />
-                    {sectionEditable ? (
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <Button variant="secondary" onClick={() => { setEditingId(item.id); setDraft({ ...item }); }} style={{ padding: "7px 10px" }}>Tahrirlash</Button>
-                        <Button variant="danger" onClick={() => remove(item.id)} style={{ padding: "7px 10px" }}>O'chirish</Button>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-                <div style={{ marginTop: 12 }}>
-                  <CommentThread comments={item.comments} onAddComment={sectionEditable ? (text) => addComment(item.id, text) : null} placeholder="Aloqa bo'yicha izoh..." />
-                </div>
-              </Card>
-            );
-          })}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 900 }}>Aloqalar</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: T.colors.textSecondary }}>{getMonthLabel(selectedMonthId)} uchun 31 kunlik jadval</div>
         </div>
-      ) : (
-        <EmptyState title="Aloqa yozuvlari yo'q" desc="Mijoz bilan call va meetinglar tarixi shu yerda saqlanadi." />
-      )}
+        {sectionEditable ? <Button onClick={saveRows}>Jadvalni saqlash</Button> : null}
+      </div>
+      <DataTable columns={["Kun", "Tur", "Kim gaplashdi", "Natija", "Keyingi qadam", "Holat"]}>
+        {rows.map((row) => (
+          <Row key={row.day}>
+            <Cell style={{ fontWeight: 800 }}>{String(row.day).padStart(2, "0")}</Cell>
+            <Cell><SelectCellInput value={row.type} onChange={(value) => updateRow(row.day, "type", value)} disabled={!sectionEditable} options={["Call", "Meeting"]} /></Cell>
+            <Cell><SelectCellInput value={row.whoId} onChange={(value) => updateRow(row.day, "whoId", value)} disabled={!sectionEditable} options={[{ value: "", label: "Tanlanmagan" }, ...assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]} /></Cell>
+            <Cell><TextCellInput value={row.result} onChange={(value) => updateRow(row.day, "result", value)} disabled={!sectionEditable} placeholder="Natija" /></Cell>
+            <Cell><TextCellInput value={row.next} onChange={(value) => updateRow(row.day, "next", value)} disabled={!sectionEditable} placeholder="Keyingi qadam" /></Cell>
+            <Cell><SelectCellInput value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={CALL_STATUSES} /></Cell>
+          </Row>
+        ))}
+      </DataTable>
     </Card>
   );
+}
+
+export const ContentPlanTab = memo(function ContentPlanTab(props) {
+  return <MonthlyContentSheet {...props} />;
+});
+
+export const MediaPlanTab = memo(function MediaPlanTab(props) {
+  return <MonthlyMediaSheet {...props} />;
+});
+
+export const PlansTab = memo(function PlansTab(props) {
+  return <MonthlyPlansSheet {...props} />;
+});
+
+export const CallsTab = memo(function CallsTab(props) {
+  return <MonthlyCallsSheet {...props} />;
 });
 
 export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, project, employees, onBack, onSaveProject, onDeleteProject }) {
   const [tab, setTab] = useState("tasks");
   const [editingProject, setEditingProject] = useState(false);
   const editable = canManageProjectMeta(profile, project);
-  const sectionEditable = canWorkInProject(profile, project);
-  const progress = calcProjectProgress(project);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
   const manager = employeeMap[project.managerId];
+  const progress = calcProjectProgress(project);
   const progressColor = progress >= 75 ? T.colors.green : progress >= 40 ? T.colors.accent : T.colors.orange;
+  const months = useMemo(() => getMonthList(project.months), [project.months]);
+  const [selectedMonthId, setSelectedMonthId] = useState(months[0]?.id || getCurrentMonthId());
+
+  useEffect(() => {
+    const activeMonthId = months.find((month) => month.status === "active")?.id || months[0]?.id || getCurrentMonthId();
+    setSelectedMonthId((current) => (months.some((month) => month.id === current) ? current : activeMonthId));
+  }, [months]);
+
+  function openNewMonth() {
+    const currentMonthId = getCurrentMonthId();
+    if (months.some((month) => month.id === currentMonthId)) {
+      setSelectedMonthId(currentMonthId);
+      return;
+    }
+    const nextMonths = [
+      ...months.map((month) => ({ ...month, status: "archived" })),
+      { id: currentMonthId, label: getMonthLabel(currentMonthId), status: "active", createdAt: isoNow() },
+    ];
+    setSelectedMonthId(currentMonthId);
+    onSaveProject(
+      { ...project, months: nextMonths },
+      { notifyText: `Yangi oy workspace ochildi: ${getMonthLabel(currentMonthId)}`, auditText: `Yangi oy workspace yaratildi: ${getMonthLabel(currentMonthId)}`, page: "projects" }
+    );
+  }
 
   return (
     <div>
@@ -741,6 +745,14 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
         </div>
       </Card>
 
+      <MonthWorkspaceCards
+        project={project}
+        selectedMonthId={selectedMonthId}
+        onSelectMonth={setSelectedMonthId}
+        onCreateMonth={openNewMonth}
+        editable={editable}
+      />
+
       <div style={{ display: "flex", gap: 4, marginBottom: 20, background: T.colors.bg, borderRadius: T.radius.md, padding: 4, overflowX: "auto" }}>
         {[
           { id: "tasks", label: "Topshiriqlar" },
@@ -772,11 +784,11 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
         ))}
       </div>
 
-      {tab === "tasks" ? <TasksTab profile={profile} project={project} employees={employees} editable={sectionEditable} onUpdateProject={onSaveProject} /> : null}
-      {tab === "content" ? <ContentPlanTab profile={profile} project={project} employees={employees} editable={sectionEditable} onUpdateProject={onSaveProject} /> : null}
-      {tab === "media" ? <MediaPlanTab profile={profile} project={project} employees={employees} editable={sectionEditable} onUpdateProject={onSaveProject} /> : null}
-      {tab === "plans" ? <PlansTab profile={profile} project={project} editable={sectionEditable} onUpdateProject={onSaveProject} /> : null}
-      {tab === "calls" ? <CallsTab profile={profile} project={project} employees={employees} editable={sectionEditable} onUpdateProject={onSaveProject} /> : null}
+      {tab === "tasks" ? <TasksTab profile={profile} project={project} employees={employees} selectedMonthId={selectedMonthId} editable={editable} onUpdateProject={onSaveProject} /> : null}
+      {tab === "content" ? <ContentPlanTab profile={profile} project={project} employees={employees} selectedMonthId={selectedMonthId} editable={editable} onUpdateProject={onSaveProject} /> : null}
+      {tab === "media" ? <MediaPlanTab profile={profile} project={project} employees={employees} selectedMonthId={selectedMonthId} editable={editable} onUpdateProject={onSaveProject} /> : null}
+      {tab === "plans" ? <PlansTab profile={profile} project={project} selectedMonthId={selectedMonthId} editable={editable} onUpdateProject={onSaveProject} /> : null}
+      {tab === "calls" ? <CallsTab profile={profile} project={project} employees={employees} selectedMonthId={selectedMonthId} editable={editable} onUpdateProject={onSaveProject} /> : null}
 
       {editingProject ? (
         <ProjectFormModal
