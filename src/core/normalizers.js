@@ -38,6 +38,8 @@ export function normalizeProject(project) {
     end: project.end || "",
     managerId: project.managerId || "",
     teamIds: Array.isArray(project.teamIds) ? project.teamIds : [],
+    months: Array.isArray(project.months) ? project.months : [],
+    servicePrice: Number(project.servicePrice || 0),
     status: project.status || "Rejalashtirildi",
     priority: project.priority || "O'rta",
     visibility: project.visibility || "team",
@@ -183,7 +185,7 @@ export function projectMetaDocFromProject(project, actor, fallback = null) {
   const n = normalizeProject(project);
   return {
     name: n.name, client: n.client, type: n.type, start: n.start, end: n.end,
-    managerId: n.managerId, teamIds: n.teamIds, status: n.status,
+    managerId: n.managerId, teamIds: n.teamIds, months: n.months, servicePrice: n.servicePrice, status: n.status,
     priority: n.priority, visibility: n.visibility || "team",
     archived: Boolean(n.archived), report: n.report,
     metrics: computeProjectMetrics(n), memberStats: computeProjectMemberStats(n),
@@ -199,6 +201,7 @@ export function hydrateProject(metaProject, workspace = {}) {
     tasks:       workspace.tasks       ?? metaProject.tasks       ?? [],
     contentPlan: workspace.contentPlan ?? metaProject.contentPlan ?? [],
     mediaPlan:   workspace.mediaPlan   ?? metaProject.mediaPlan   ?? [],
+    months:      workspace.months      ?? metaProject.months      ?? [],
     plans:       workspace.plans       ?? metaProject.plans       ?? { daily: [], weekly: [], monthly: [] },
     calls:       workspace.calls       ?? metaProject.calls       ?? [],
   });

@@ -1,5 +1,5 @@
-import React, { memo, useState, useMemo, useCallback } from "react";
-import { T, PROJECT_STATUSES, TASK_STATUSES, CONTENT_STATUSES, PLAN_STATUSES, SHOOT_STATUSES, CALL_STATUSES, PRIORITIES, PLATFORMS, FORMATS, LIMITS } from "../core/constants.js";
+import React, { memo, useEffect, useMemo, useState, useCallback } from "react";
+import { T, PROJECT_STATUSES, TASK_STATUSES, CONTENT_STATUSES, PLAN_STATUSES, SHOOT_STATUSES, CALL_STATUSES, PRIORITIES, PLATFORMS, FORMATS, LIMITS, getCurrentMonthId, getMonthLabel } from "../core/constants.js";
 import { toMoney, clamp, isoNow, makeId, sortByRecent, indexById, calcProjectProgress, flattenPlans, splitPlans } from "../core/utils.js";
 import { canEdit, canViewReports, canWorkInProject, canManageProjectMeta, projectMembers } from "../core/permissions.js";
 import { normalizeComments, createComment, withRecordMeta } from "../core/normalizers.js";
@@ -9,6 +9,9 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, ed
   const sectionEditable = canWorkInProject(profile, project);
   const assignableEmployees = projectMembers(project, employees);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
+  const months = Array.isArray(project.months) ? project.months : [];
+  const [selectedMonthId, setSelectedMonthId] = useState(getCurrentMonthId());
+  const [showLegacyTasks, setShowLegacyTasks] = useState(false);
   const [draft, setDraft] = useState({
     name: "",
     ownerId: assignableEmployees[0]?.id || "",
@@ -19,6 +22,25 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, ed
     comments: [],
   });
   const [editingTask, setEditingTask] = useState("");
+  const monthsExist = months.length > 0;
+  const filteredTasks = monthsExist
+    ? project.tasks.filter((task) => task.monthId === selectedMonthId)
+    : project.tasks;
+  const legacyTasks = monthsExist
+    ? project.tasks.filter((task) => !task.monthId)
+    : [];
+
+  useEffect(() => {
+    if (!monthsExist) {
+      setSelectedMonthId(getCurrentMonthId());
+      return;
+    }
+    const activeMonth = months.find((month) => month.status === "active")?.id || months[0]?.id || getCurrentMonthId();
+    setSelectedMonthId((current) => {
+      if (months.some((month) => month.id === current)) return current;
+      return activeMonth;
+    });
+  }, [monthsExist, months]);
 
   function resetForm() {
     setDraft({
@@ -42,7 +64,7 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, ed
     if (!draft.name?.trim()) return;
     const tasks = editingTask
       ? project.tasks.map((task) => (task.id === editingTask ? withRecordMeta({ ...task, ...draft }, profile) : task))
-      : [...project.tasks, withRecordMeta({ ...draft, id: makeId("task") }, profile)];
+      : [...project.tasks, withRecordMeta({ ...draft, id: makeId("task"), monthId: selectedMonthId }, profile)];
     onUpdateProject({ ...project, tasks }, { notifyText: `Task yangilandi: ${draft.name}`, auditText: `Task saqlandi: ${draft.name}`, page: "projects" });
     resetForm();
   }
@@ -71,11 +93,87 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, ed
     onUpdateProject({ ...project, tasks: project.tasks.filter((task) => task.id !== taskId) }, { notifyText: "Task o'chirildi", auditText: "Task o'chirildi", page: "projects" });
   }
 
+  function openNewMonth() {
+    const currentMonthId = getCurrentMonthId();
+    if (months.some((month) => month.id === currentMonthId)) {
+      setSelectedMonthId(currentMonthId);
+      return;
+    }
+    const nextMonths = [
+      ...months.map((month) => ({ ...month, status: "archived" })),
+      { id: currentMonthId, label: getMonthLabel(currentMonthId), status: "active", createdAt: new Date().toISOString() },
+    ];
+    setSelectedMonthId(currentMonthId);
+    onUpdateProject(
+      { ...project, months: nextMonths },
+      { notifyText: `Yangi oy ochildi: ${getMonthLabel(currentMonthId)}`, auditText: `Task workspace yangi oyga o'tdi: ${getMonthLabel(currentMonthId)}`, page: "projects" }
+    );
+  }
+
+  function renderTaskRows(tasks) {
+    return tasks.map((task) => {
+      const owner = employeeMap[task.ownerId];
+      const canChangeStatus = sectionEditable;
+      return (
+        <Row key={task.id}>
+          <Cell style={{ fontWeight: 800 }}>{task.name}</Cell>
+          <Cell>{owner?.name || "Biriktirilmagan"}</Cell>
+          <Cell>{task.start || "-"}</Cell>
+          <Cell style={{ fontWeight: 800 }}>{task.deadline || "-"}</Cell>
+          <Cell>
+            <StatusSelect value={task.status} options={TASK_STATUSES} onChange={canChangeStatus ? (status) => updateTaskStatus(task.id, status) : null} disabled={!canChangeStatus} />
+          </Cell>
+          <Cell style={{ color: T.colors.textMuted }}>{task.note || "-"}</Cell>
+          <Cell>
+            <CommentThread comments={task.comments} onAddComment={sectionEditable ? (text) => addComment(task.id, text) : null} placeholder="Task bo'yicha izoh yozing..." />
+          </Cell>
+          <Cell>
+            {sectionEditable ? (
+              <div style={{ display: "flex", gap: 8 }}>
+                <Button variant="secondary" onClick={() => openForEdit(task)} style={{ padding: "7px 10px" }}>Tahrirlash</Button>
+                <Button variant="danger" onClick={() => deleteTask(task.id)} style={{ padding: "7px 10px" }}>O'chirish</Button>
+              </div>
+            ) : (
+              "-"
+            )}
+          </Cell>
+        </Row>
+      );
+    });
+  }
+
   return (
     <Card>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <div style={{ fontSize: 18, fontWeight: 900 }}>Topshiriqlar</div>
         {sectionEditable ? <Button onClick={resetForm}>Yangi task</Button> : null}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+        {(monthsExist ? months : [{ id: getCurrentMonthId(), label: getMonthLabel(getCurrentMonthId()), status: "active" }]).map((month) => {
+          const active = month.id === selectedMonthId;
+          return (
+            <button
+              key={month.id}
+              type="button"
+              onClick={() => setSelectedMonthId(month.id)}
+              style={{
+                border: `1px solid ${active ? T.colors.accent : T.colors.border}`,
+                background: active ? T.colors.accentSoft : T.colors.bg,
+                color: active ? T.colors.accent : T.colors.textSecondary,
+                borderRadius: T.radius.full,
+                padding: "7px 12px",
+                fontFamily: T.font,
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+            >
+              {month.status === "active" ? "🟢" : "📦"} {month.label || getMonthLabel(month.id)}
+            </button>
+          );
+        })}
+        {sectionEditable ? <Button variant="secondary" onClick={openNewMonth}>+ Yangi oy</Button> : null}
       </div>
 
       {sectionEditable ? (
@@ -95,41 +193,32 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, ed
         </Card>
       ) : null}
 
-      {project.tasks.length ? (
+      {filteredTasks.length ? (
         <DataTable columns={["Task", "Mas'ul", "Boshlanish", "Deadline", "Holat", "Izoh", "Komment", "Amal"]}>
-          {project.tasks.map((task) => {
-            const owner = employeeMap[task.ownerId];
-            const canChangeStatus = sectionEditable;
-            return (
-              <Row key={task.id}>
-                <Cell style={{ fontWeight: 800 }}>{task.name}</Cell>
-                <Cell>{owner?.name || "Biriktirilmagan"}</Cell>
-                <Cell>{task.start || "-"}</Cell>
-                <Cell style={{ fontWeight: 800 }}>{task.deadline || "-"}</Cell>
-                <Cell>
-                  <StatusSelect value={task.status} options={TASK_STATUSES} onChange={canChangeStatus ? (status) => updateTaskStatus(task.id, status) : null} disabled={!canChangeStatus} />
-                </Cell>
-                <Cell style={{ color: T.colors.textMuted }}>{task.note || "-"}</Cell>
-                <Cell>
-                  <CommentThread comments={task.comments} onAddComment={sectionEditable ? (text) => addComment(task.id, text) : null} placeholder="Task bo'yicha izoh yozing..." />
-                </Cell>
-                <Cell>
-                  {sectionEditable ? (
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <Button variant="secondary" onClick={() => openForEdit(task)} style={{ padding: "7px 10px" }}>Tahrirlash</Button>
-                      <Button variant="danger" onClick={() => deleteTask(task.id)} style={{ padding: "7px 10px" }}>O'chirish</Button>
-                    </div>
-                  ) : (
-                    "-"
-                  )}
-                </Cell>
-              </Row>
-            );
-          })}
+          {renderTaskRows(filteredTasks)}
         </DataTable>
       ) : (
         <EmptyState title="Tasklar yo'q" desc="Yangi task qo'shilgach shu yerda ko'rinadi." />
       )}
+
+      {monthsExist && legacyTasks.length ? (
+        <div style={{ marginTop: 16 }}>
+          <button
+            type="button"
+            onClick={() => setShowLegacyTasks((current) => !current)}
+            style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer", fontFamily: T.font, fontSize: 13, fontWeight: 800, color: T.colors.textSecondary }}
+          >
+            📋 Eski tasklar ({legacyTasks.length} ta) {showLegacyTasks ? "−" : "+"}
+          </button>
+          {showLegacyTasks ? (
+            <div style={{ marginTop: 12 }}>
+              <DataTable columns={["Task", "Mas'ul", "Boshlanish", "Deadline", "Holat", "Izoh", "Komment", "Amal"]}>
+                {renderTaskRows(legacyTasks)}
+              </DataTable>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </Card>
   );
 });
@@ -722,6 +811,7 @@ export function ProjectFormModal({ employees, initialValue, onClose, onSubmit })
       end: "",
       managerId: employees[0]?.id || "",
       teamIds: [],
+      servicePrice: "",
       status: "Rejalashtirildi",
       priority: "O'rta",
     }
@@ -733,7 +823,7 @@ export function ProjectFormModal({ employees, initialValue, onClose, onSubmit })
 
   function handleSubmit() {
     if (!form.name.trim() || !form.client.trim()) return;
-    onSubmit({ ...form, teamIds: Array.from(new Set([...form.teamIds, form.managerId].filter(Boolean))) });
+    onSubmit({ ...form, servicePrice: Number(form.servicePrice || 0), teamIds: Array.from(new Set([...form.teamIds, form.managerId].filter(Boolean))) });
   }
 
   return (
@@ -745,6 +835,7 @@ export function ProjectFormModal({ employees, initialValue, onClose, onSubmit })
         <Field label="Manager" value={form.managerId} onChange={(value) => update("managerId", value)} options={employees.map((employee) => ({ value: employee.id, label: employee.name }))} />
         <Field label="Boshlanish" type="date" value={form.start} onChange={(value) => update("start", value)} />
         <Field label="Deadline" type="date" value={form.end} onChange={(value) => update("end", value)} />
+        <Field label="Xizmat narxi (so'm)" type="number" value={form.servicePrice} onChange={(value) => update("servicePrice", value)} />
         <Field label="Loyiha statusi" value={form.status} onChange={(value) => update("status", value)} options={PROJECT_STATUSES} />
         <Field label="Muhimlik" value={form.priority} onChange={(value) => update("priority", value)} options={PRIORITIES} />
       </div>

@@ -920,7 +920,7 @@ function AppShell() {
           {page === "meetings"      && <MeetingsPage profile={profile} meetings={meetingDocs} employees={employees} onAddMeeting={addMeeting} onDeleteMeeting={deleteMeeting} />}
           {page === "chat"          && <ChatPage profile={profile} employees={employees} messages={chatMessages} onSendMessage={sendChatMessage} onEditMessage={editChatMessage} onDeleteMessage={deleteChatMessage} onMarkRead={markChatMessagesRead} onLoadOlder={loadOlderMessages} hasMore={chatHasMore} loadingOlder={chatLoadingOlder} loading={chatPageLoading} />}
           {page === "notifications" && <NotificationsPage notifications={notificationDocs} profile={profile} onMarkAllRead={markAllNotificationsRead} />}
-          {page === "finance" && canViewFinancialDashboard(profile.role) && <FinancePage dashboard={financialDashboard} />}
+          {page === "finance" && canViewFinancialDashboard(profile.role) && <FinancePage projects={projects} employees={employees} />}
           {page === "reports" && canViewReports(profile.role) && <ReportsPage projects={projects} />}
           {page === "workflow"      && <WorkflowPage />}
         </main>

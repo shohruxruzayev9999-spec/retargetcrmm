@@ -107,3 +107,19 @@ export const EMPTY_PROJECT_WORKSPACE = {
   plans: { daily: [], weekly: [], monthly: [] },
   calls: [],
 };
+
+export function getCurrentMonthId() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+export function getMonthLabel(monthId) {
+  if (!monthId) return "";
+  const [y, m] = monthId.split("-");
+  const monthIndex = parseInt(m, 10) - 1;
+  const months = ["Yanvar","Fevral","Mart","Aprel","May","Iyun",
+    "Iyul","Avgust","Sentabr","Oktyabr","Noyabr","Dekabr"];
+  return `${months[monthIndex] || monthId} ${y}`;
+}

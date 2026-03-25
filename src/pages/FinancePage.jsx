@@ -1,17 +1,82 @@
-import React, { memo } from "react";
-import { T } from "../core/constants.js";
+import React, { memo, useEffect, useMemo, useState } from "react";
+import { collection, onSnapshot } from "firebase/firestore";
+import { T, getCurrentMonthId, getMonthLabel } from "../core/constants.js";
+import { db } from "../core/firebase.js";
+import { buildFinancialDashboard, collectFinancialMonths } from "../core/financeService.js";
+import { normalizeStoredRecord } from "../core/normalizers.js";
 import { toMoney } from "../core/utils.js";
 import { Card, DataTable, EmptyState, PageHeader, Row, Cell, StatCard } from "../components/ui/index.jsx";
 
-export const FinancePage = memo(function FinancePage({ dashboard }) {
+export const FinancePage = memo(function FinancePage({ projects, employees }) {
+  const [projectTasksById, setProjectTasksById] = useState({});
+  const [selectedMonthId, setSelectedMonthId] = useState(getCurrentMonthId());
+
+  useEffect(() => {
+    if (!db || !projects.length) {
+      setProjectTasksById({});
+      return undefined;
+    }
+
+    const unsubscribes = projects.map((project) =>
+      onSnapshot(collection(db, "projects", project.id, "tasks"), (snapshot) => {
+        const nextTasks = snapshot.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
+        setProjectTasksById((current) => ({ ...current, [project.id]: nextTasks }));
+      })
+    );
+
+    return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+  }, [projects]);
+
+  const projectsWithTasks = useMemo(
+    () => projects.map((project) => ({ ...project, tasks: projectTasksById[project.id] || project.tasks || [] })),
+    [projects, projectTasksById]
+  );
+
+  const months = useMemo(() => collectFinancialMonths(projectsWithTasks), [projectsWithTasks]);
+  const dashboard = useMemo(
+    () => buildFinancialDashboard({ projects: projectsWithTasks, employees, selectedMonthId }),
+    [projectsWithTasks, employees, selectedMonthId]
+  );
   const { summary, projectRows, employeeRows } = dashboard;
+
+  useEffect(() => {
+    if (!months.includes(selectedMonthId)) setSelectedMonthId(getCurrentMonthId());
+  }, [months, selectedMonthId]);
 
   return (
     <div>
       <PageHeader
         title="Moliyaviy Dashboard"
-        subtitle="Faqat CEO uchun moliyaviy ko'rsatkichlar. KPI, ish haqi va loyiha daromadlari real vaqt rejimida hisoblanadi."
+        subtitle="Faqat CEO uchun"
       />
+
+      <Card style={{ marginBottom: 18, padding: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {months.map((monthId) => {
+            const active = monthId === selectedMonthId;
+            return (
+              <button
+                key={monthId}
+                type="button"
+                onClick={() => setSelectedMonthId(monthId)}
+                style={{
+                  border: `1px solid ${active ? T.colors.accent : T.colors.border}`,
+                  background: active ? T.colors.accentSoft : T.colors.bg,
+                  color: active ? T.colors.accent : T.colors.textSecondary,
+                  borderRadius: T.radius.full,
+                  padding: "8px 12px",
+                  fontFamily: T.font,
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                {getMonthLabel(monthId)}
+              </button>
+            );
+          })}
+        </div>
+      </Card>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14, marginBottom: 18 }}>
         <StatCard label="Jami daromad" value={`${toMoney(summary.totalRevenue)} so'm`} hint="Barcha loyihalar narxi" color={T.colors.green} />
@@ -57,7 +122,7 @@ export const FinancePage = memo(function FinancePage({ dashboard }) {
         <Card>
           <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 12 }}>Xodimlar oylik hisobi</div>
           {employeeRows.length ? (
-            <DataTable columns={["Xodim", "KPI", "Asosiy oylik", "Hisoblangan oylik", "Ish hajmi"]}>
+            <DataTable columns={["Xodim", "KPI (%)", "Asosiy oylik", "Hisoblangan oylik", "Bajarilgan/Biriktirilgan tasks"]}>
               {employeeRows.map((employee) => (
                 <Row key={employee.id}>
                   <Cell>
@@ -67,7 +132,7 @@ export const FinancePage = memo(function FinancePage({ dashboard }) {
                   <Cell>{employee.kpi}%</Cell>
                   <Cell>{toMoney(employee.baseSalary)} so'm</Cell>
                   <Cell>{toMoney(employee.calculatedSalary)} so'm</Cell>
-                  <Cell>{employee.completedWork}/{employee.assignedWork}</Cell>
+                  <Cell>{employee.doneTasks}/{employee.assignedTasks}</Cell>
                 </Row>
               ))}
             </DataTable>

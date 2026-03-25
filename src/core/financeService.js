@@ -1,3 +1,4 @@
+import { getCurrentMonthId } from "./constants.js";
 import { clamp } from "./utils.js";
 
 const INVESTOR_SHARE_RATIO = 0.35;
@@ -20,9 +21,9 @@ export function calculateEmployeeFinancials(employee, metrics = {}) {
   const baseSalary = roundMoney(employee?.salary);
   const assignedWork = Math.max(
     0,
-    Math.round(safeNumber(metrics?.total || 0) || safeNumber(employee?.load || 0))
+    Math.round(safeNumber(metrics?.assignedWork || metrics?.total || 0) || safeNumber(employee?.load || 0))
   );
-  const completedWork = Math.max(0, Math.round(safeNumber(metrics?.completed || 0)));
+  const completedWork = Math.max(0, Math.round(safeNumber(metrics?.completedWork || metrics?.completed || 0)));
   const fallbackKpi = clamp(Math.round(safeNumber(employee?.kpiBase || 100)), 0, 100);
   const kpi = assignedWork > 0
     ? clamp(Math.round((completedWork / assignedWork) * 100), 0, 100)
@@ -38,7 +39,17 @@ export function calculateEmployeeFinancials(employee, metrics = {}) {
   };
 }
 
-export function buildFinancialDashboard({ projects = [], employees = [], employeeMetricsById = {} }) {
+export function collectFinancialMonths(projects = []) {
+  const months = new Set([getCurrentMonthId()]);
+  projects.forEach((project) => {
+    (project.tasks || []).forEach((task) => {
+      if (task.monthId) months.add(task.monthId);
+    });
+  });
+  return Array.from(months).sort((left, right) => right.localeCompare(left));
+}
+
+export function buildFinancialDashboard({ projects = [], employees = [], employeeMetricsById = {}, selectedMonthId = getCurrentMonthId() }) {
   const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
 
   const projectRows = projects.map((project) => {
@@ -53,12 +64,22 @@ export function buildFinancialDashboard({ projects = [], employees = [], employe
   });
 
   const employeeRows = employees.map((employee) => {
-    const financials = calculateEmployeeFinancials(employee, employeeMetricsById[employee.id]);
+    const assignedTasks = projects.flatMap((project) =>
+      (project.tasks || []).filter((task) => task.monthId === selectedMonthId && task.ownerId === employee.id)
+    );
+    const doneTasks = assignedTasks.filter((task) => task.status === "Bajarildi");
+    const financials = calculateEmployeeFinancials(employee, {
+      ...employeeMetricsById[employee.id],
+      assignedWork: assignedTasks.length,
+      completedWork: doneTasks.length,
+    });
     return {
       id: employee.id,
       name: employee.name || "Nomsiz xodim",
       role: employee.role || employee.title || "Xodim",
       dept: employee.dept || "",
+      assignedTasks: assignedTasks.length,
+      doneTasks: doneTasks.length,
       ...financials,
     };
   });
