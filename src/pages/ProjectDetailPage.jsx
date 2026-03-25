@@ -1,17 +1,17 @@
 import React, { memo, useEffect, useMemo, useState } from "react";
 import {
   T, PROJECT_STATUSES, TASK_STATUSES, CONTENT_STATUSES, PLAN_STATUSES,
-  CALL_STATUSES, PRIORITIES, PLATFORMS, FORMATS, getCurrentMonthId, getMonthLabel,
+  CALL_STATUSES, PRIORITIES, PLATFORMS, FORMATS, STATUS_META, getCurrentMonthId, getMonthLabel,
 } from "../core/constants.js";
 import { toMoney, isoNow, makeId, indexById, calcProjectProgress } from "../core/utils.js";
 import { canWorkInProject, canManageProjectMeta, projectMembers } from "../core/permissions.js";
 import { normalizeComments, createComment, withRecordMeta } from "../core/normalizers.js";
 import {
   Avatar, Button, Card, Field, Modal, EmptyState, StatusBadge,
-  StatusSelect, PriorityBadge, CircleProgress, DataTable, Row, Cell, TeamSelector, CommentThread,
+  StatusSelect, PriorityBadge, CircleProgress, DataTable, Row, Cell, TeamSelector, CommentThread, ConfirmDialog,
 } from "../components/ui/index.jsx";
 
-const MONTH_SECTIONS = ["Topshiriqlar", "Kontent", "Media plan", "Rejalar", "Aloqalar"];
+const MONTH_SECTIONS = ["Topshiriqlar", "Kontent reja", "Media plan", "Rejalar", "Aloqalar"];
 const DAY_ROWS = Array.from({ length: 31 }, (_, index) => index + 1);
 const SHEET_INPUT_STYLE = {
   width: "100%",
@@ -102,7 +102,40 @@ function SelectCellInput({ value, onChange, disabled, options }) {
   );
 }
 
-const MonthWorkspaceCards = memo(function MonthWorkspaceCards({ project, selectedMonthId, onSelectMonth, onCreateMonth, editable }) {
+function StatusCellSelect({ value, onChange, disabled, options }) {
+  const meta = STATUS_META[value] || STATUS_META["Rejalashtirildi"];
+  return (
+    <select
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      disabled={disabled}
+      style={{
+        ...SHEET_INPUT_STYLE,
+        background: meta.bg,
+        color: meta.text,
+        border: `1px solid ${meta.border}`,
+        fontWeight: 700,
+      }}
+    >
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+const MonthWorkspaceCards = memo(function MonthWorkspaceCards({
+  project,
+  selectedMonthId,
+  onSelectMonth,
+  onCreateMonth,
+  onEditMonth,
+  onToggleMonthStatus,
+  onDeleteMonth,
+  editable,
+}) {
   const months = getMonthList(project.months);
   const employeeCount = Array.isArray(project.teamIds) ? project.teamIds.length : 0;
 
@@ -166,6 +199,40 @@ const MonthWorkspaceCards = memo(function MonthWorkspaceCards({ project, selecte
               <span style={{ fontSize: 12, color: T.colors.textSecondary }}>{employeeCount} kishi biriktirilgan</span>
               <span style={{ fontSize: 12, fontWeight: 700, color: active ? T.colors.accent : T.colors.textSecondary }}>{active ? "Ochiq" : "Ochish"}</span>
             </div>
+            {editable && active ? (
+              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                <Button
+                  variant="secondary"
+                  style={{ padding: "6px 10px" }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onEditMonth(month);
+                  }}
+                >
+                  Tahrirlash
+                </Button>
+                <Button
+                  variant={month.status === "active" ? "warning" : "success"}
+                  style={{ padding: "6px 10px" }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggleMonthStatus(month);
+                  }}
+                >
+                  {month.status === "active" ? "Arxivga o'tkazish" : "Faollashtirish"}
+                </Button>
+                <Button
+                  variant="danger"
+                  style={{ padding: "6px 10px" }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDeleteMonth(month);
+                  }}
+                >
+                  O'chirish
+                </Button>
+              </div>
+            ) : null}
           </Card>
         );
       })}
@@ -173,9 +240,9 @@ const MonthWorkspaceCards = memo(function MonthWorkspaceCards({ project, selecte
       {editable ? (
         <Card onClick={onCreateMonth} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 250, borderStyle: "dashed" }}>
           <div style={{ fontSize: 34, color: T.colors.accent, lineHeight: 1 }}>＋</div>
-          <div style={{ marginTop: 12, fontWeight: 800 }}>Yangi oy ochish</div>
+          <div style={{ marginTop: 12, fontWeight: 800 }}>Yangi oyna qo'shish</div>
           <div style={{ marginTop: 6, fontSize: 12, color: T.colors.textSecondary, textAlign: "center", maxWidth: 220 }}>
-            Yangi oy workspace yaratiladi va oldingi oylar arxivga o'tadi.
+            Yangi workspace yarating, nom bering va kerak bo'lsa uni faol yoki arxiv holatga o'tkazing.
           </div>
         </Card>
       ) : null}
@@ -350,6 +417,7 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
   const defaultOwnerId = assignableEmployees[0]?.id || "";
   const contentItems = project.contentPlan || [];
   const [rows, setRows] = useState([]);
+  const [scenarioDay, setScenarioDay] = useState(null);
 
   useEffect(() => {
     const scoped = contentItems.filter((item) => recordMatchesMonth(item, selectedMonthId));
@@ -372,6 +440,8 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
   function updateRow(day, key, value) {
     setRows((current) => current.map((row) => (row.day === day ? { ...row, [key]: value } : row)));
   }
+
+  const activeScenarioRow = rows.find((row) => row.day === scenarioDay) || null;
 
   function saveRows() {
     const otherItems = contentItems.filter((item) => !recordMatchesMonth(item, selectedMonthId));
@@ -403,20 +473,61 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
         </div>
         {sectionEditable ? <Button onClick={saveRows}>Jadvalni saqlash</Button> : null}
       </div>
-      <DataTable columns={["Kun", "Platforma", "Format", "Mavzu", "Caption", "Mas'ul", "Holat", "Izoh"]}>
+      <DataTable columns={["Kun", "Platforma", "Format", "Mavzu", "Ssenariy", "Mas'ul", "Holat", "Izoh"]}>
         {rows.map((row) => (
           <Row key={row.day}>
             <Cell style={{ fontWeight: 800 }}>{String(row.day).padStart(2, "0")}</Cell>
             <Cell><SelectCellInput value={row.platform} onChange={(value) => updateRow(row.day, "platform", value)} disabled={!sectionEditable} options={PLATFORMS} /></Cell>
             <Cell><SelectCellInput value={row.format} onChange={(value) => updateRow(row.day, "format", value)} disabled={!sectionEditable} options={FORMATS} /></Cell>
             <Cell><TextCellInput value={row.topic} onChange={(value) => updateRow(row.day, "topic", value)} disabled={!sectionEditable} placeholder="Mavzu" /></Cell>
-            <Cell><TextCellInput value={row.caption} onChange={(value) => updateRow(row.day, "caption", value)} disabled={!sectionEditable} placeholder="Caption" /></Cell>
+            <Cell>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setScenarioDay(row.day)}
+                  style={{
+                    ...SHEET_INPUT_STYLE,
+                    cursor: "pointer",
+                    textAlign: "left",
+                    minHeight: 40,
+                    background: row.caption ? T.colors.surface : T.colors.bg,
+                  }}
+                >
+                  {row.caption ? (
+                    <span style={{ display: "block", color: T.colors.text, fontSize: 12, lineHeight: 1.4 }}>
+                      {row.caption.length > 88 ? `${row.caption.slice(0, 88)}...` : row.caption}
+                    </span>
+                  ) : (
+                    <span style={{ color: T.colors.textSecondary }}>Ssenariy yozish / o'qish</span>
+                  )}
+                </button>
+                <div style={{ fontSize: 11, color: T.colors.textTertiary }}>
+                  {row.caption ? `${row.caption.length} belgi` : "Bo'sh"}
+                </div>
+              </div>
+            </Cell>
             <Cell><SelectCellInput value={row.ownerId} onChange={(value) => updateRow(row.day, "ownerId", value)} disabled={!sectionEditable} options={[{ value: "", label: "Tanlanmagan" }, ...assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]} /></Cell>
-            <Cell><SelectCellInput value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={CONTENT_STATUSES} /></Cell>
+            <Cell><StatusCellSelect value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={CONTENT_STATUSES} /></Cell>
             <Cell><TextCellInput value={row.note} onChange={(value) => updateRow(row.day, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
           </Row>
         ))}
       </DataTable>
+      {activeScenarioRow ? (
+        <ScenarioModal
+          day={activeScenarioRow.day}
+          value={activeScenarioRow.caption}
+          editable={sectionEditable}
+          onClose={() => setScenarioDay(null)}
+          onSave={(text) => {
+            updateRow(activeScenarioRow.day, "caption", text);
+            setScenarioDay(null);
+          }}
+          onClear={() => {
+            updateRow(activeScenarioRow.day, "caption", "");
+            setScenarioDay(null);
+          }}
+        />
+      ) : null}
     </Card>
   );
 }
@@ -489,7 +600,7 @@ function MonthlyMediaSheet({ profile, project, employees, selectedMonthId, onUpd
             <Cell><SelectCellInput value={row.format} onChange={(value) => updateRow(row.day, "format", value)} disabled={!sectionEditable} options={FORMATS} /></Cell>
             <Cell><SelectCellInput value={row.ownerId} onChange={(value) => updateRow(row.day, "ownerId", value)} disabled={!sectionEditable} options={[{ value: "", label: "Tanlanmagan" }, ...assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]} /></Cell>
             <Cell><NumberCellInput value={row.budget} onChange={(value) => updateRow(row.day, "budget", value)} disabled={!sectionEditable} placeholder="0" /></Cell>
-            <Cell><SelectCellInput value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={PLAN_STATUSES} /></Cell>
+            <Cell><StatusCellSelect value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={PLAN_STATUSES} /></Cell>
             <Cell><TextCellInput value={row.note} onChange={(value) => updateRow(row.day, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
           </Row>
         ))}
@@ -559,7 +670,7 @@ function MonthlyPlansSheet({ profile, project, selectedMonthId, onUpdateProject 
             <Cell style={{ fontWeight: 800 }}>{String(row.day).padStart(2, "0")}</Cell>
             <Cell><TextCellInput value={row.title} onChange={(value) => updateRow(row.day, "title", value)} disabled={!sectionEditable} placeholder="Kunlik reja" /></Cell>
             <Cell><SelectCellInput value={row.taskId} onChange={(value) => updateRow(row.day, "taskId", value)} disabled={!sectionEditable} options={taskOptions} /></Cell>
-            <Cell><SelectCellInput value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={PLAN_STATUSES} /></Cell>
+            <Cell><StatusCellSelect value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={PLAN_STATUSES} /></Cell>
             <Cell><TextCellInput value={row.note} onChange={(value) => updateRow(row.day, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
           </Row>
         ))}
@@ -631,7 +742,7 @@ function MonthlyCallsSheet({ profile, project, employees, selectedMonthId, onUpd
             <Cell><SelectCellInput value={row.whoId} onChange={(value) => updateRow(row.day, "whoId", value)} disabled={!sectionEditable} options={[{ value: "", label: "Tanlanmagan" }, ...assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]} /></Cell>
             <Cell><TextCellInput value={row.result} onChange={(value) => updateRow(row.day, "result", value)} disabled={!sectionEditable} placeholder="Natija" /></Cell>
             <Cell><TextCellInput value={row.next} onChange={(value) => updateRow(row.day, "next", value)} disabled={!sectionEditable} placeholder="Keyingi qadam" /></Cell>
-            <Cell><SelectCellInput value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={CALL_STATUSES} /></Cell>
+            <Cell><StatusCellSelect value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={CALL_STATUSES} /></Cell>
           </Row>
         ))}
       </DataTable>
@@ -655,9 +766,95 @@ export const CallsTab = memo(function CallsTab(props) {
   return <MonthlyCallsSheet {...props} />;
 });
 
+function WorkspaceModal({ initialValue, onClose, onSubmit }) {
+  const [form, setForm] = useState(() => {
+    const currentMonthId = getCurrentMonthId();
+    return initialValue || {
+      id: currentMonthId,
+      label: getMonthLabel(currentMonthId),
+      status: "active",
+    };
+  });
+
+  function update(key, value) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function handleMonthChange(value) {
+    update("id", value);
+    if (!initialValue?.label || initialValue?.label === getMonthLabel(initialValue?.id)) {
+      update("label", getMonthLabel(value));
+    }
+  }
+
+  function handleSubmit() {
+    if (!form.id || !form.label.trim()) return;
+    onSubmit({
+      id: form.id,
+      label: form.label.trim(),
+      status: form.status || "active",
+      createdAt: initialValue?.createdAt || isoNow(),
+    });
+  }
+
+  return (
+    <Modal title={initialValue ? "Workspace ni tahrirlash" : "Yangi workspace"} onClose={onClose} width={620}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 }}>
+        {initialValue ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: T.colors.textSecondary }}>Oy / davr</span>
+            <div style={{ ...SHEET_INPUT_STYLE, display: "flex", alignItems: "center", minHeight: 42, color: T.colors.textSecondary }}>
+              {getMonthLabel(form.id)}
+            </div>
+          </div>
+        ) : (
+          <Field label="Oy / davr" type="month" value={form.id} onChange={handleMonthChange} />
+        )}
+        <Field label="Holati" value={form.status} onChange={(value) => update("status", value)} options={[{ value: "active", label: "Faol" }, { value: "archived", label: "Arxiv" }]} />
+      </div>
+      <div style={{ marginTop: 14 }}>
+        <Field label="Oyna nomi" value={form.label} onChange={(value) => update("label", value)} placeholder="Masalan: Mart 2026 yoki 1-davr" />
+      </div>
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
+        <Button variant="secondary" onClick={onClose}>Bekor</Button>
+        <Button onClick={handleSubmit}>Saqlash</Button>
+      </div>
+    </Modal>
+  );
+}
+
+function ScenarioModal({ value, onClose, onSave, onClear, editable, day }) {
+  const [text, setText] = useState(value || "");
+
+  return (
+    <Modal title={`${String(day).padStart(2, "0")} kun — Ssenariy`} onClose={onClose} width={760}>
+      <Field
+        label="Ssenariy matni"
+        type="textarea"
+        rows={10}
+        value={text}
+        onChange={setText}
+        placeholder="Video/post uchun ssenariy, kadrlar, matn va izohlarni shu yerga yozing..."
+      />
+      <div style={{ display: "flex", gap: 10, justifyContent: "space-between", marginTop: 20 }}>
+        <div>
+          {editable ? <Button variant="danger" onClick={() => onClear()}>O'chirish</Button> : null}
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Button variant="secondary" onClick={onClose}>Bekor</Button>
+          {editable ? <Button onClick={() => onSave(text)}>Saqlash</Button> : null}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, project, employees, onBack, onSaveProject, onDeleteProject }) {
   const [tab, setTab] = useState("tasks");
   const [editingProject, setEditingProject] = useState(false);
+  const [workspaceModalMonth, setWorkspaceModalMonth] = useState(null);
+  const [showWorkspaceCreate, setShowWorkspaceCreate] = useState(false);
+  const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState(null);
   const editable = canManageProjectMeta(profile, project);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
   const manager = employeeMap[project.managerId];
@@ -671,20 +868,56 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
     setSelectedMonthId((current) => (months.some((month) => month.id === current) ? current : activeMonthId));
   }, [months]);
 
-  function openNewMonth() {
-    const currentMonthId = getCurrentMonthId();
-    if (months.some((month) => month.id === currentMonthId)) {
-      setSelectedMonthId(currentMonthId);
-      return;
+  function saveWorkspaceMonth(nextMonth, mode = "create") {
+    const existingIndex = months.findIndex((month) => month.id === nextMonth.id);
+    let nextMonths = months.map((month) => ({ ...month }));
+
+    if (nextMonth.status === "active") {
+      nextMonths = nextMonths.map((month) => ({ ...month, status: "archived" }));
     }
-    const nextMonths = [
-      ...months.map((month) => ({ ...month, status: "archived" })),
-      { id: currentMonthId, label: getMonthLabel(currentMonthId), status: "active", createdAt: isoNow() },
-    ];
-    setSelectedMonthId(currentMonthId);
+
+    if (existingIndex >= 0) {
+      nextMonths[existingIndex] = { ...nextMonths[existingIndex], ...nextMonth };
+    } else {
+      nextMonths.push({ ...nextMonth, createdAt: nextMonth.createdAt || isoNow() });
+    }
+
+    nextMonths.sort((a, b) => String(b.id || "").localeCompare(String(a.id || "")));
+    setSelectedMonthId(nextMonth.id);
     onSaveProject(
       { ...project, months: nextMonths },
-      { notifyText: `Yangi oy workspace ochildi: ${getMonthLabel(currentMonthId)}`, auditText: `Yangi oy workspace yaratildi: ${getMonthLabel(currentMonthId)}`, page: "projects" }
+      {
+        notifyText: mode === "create" ? `Yangi workspace yaratildi: ${nextMonth.label}` : `Workspace yangilandi: ${nextMonth.label}`,
+        auditText: mode === "create" ? `Workspace yaratildi: ${nextMonth.label}` : `Workspace tahrirlandi: ${nextMonth.label}`,
+        page: "projects",
+      }
+    );
+  }
+
+  function toggleWorkspaceStatus(month) {
+    const nextStatus = month.status === "active" ? "archived" : "active";
+    saveWorkspaceMonth({ ...month, status: nextStatus }, "edit");
+  }
+
+  function deleteWorkspaceMonth(month) {
+    const nextMonths = months.filter((item) => item.id !== month.id);
+    const nextProject = {
+      ...project,
+      months: nextMonths,
+      tasks: (project.tasks || []).filter((task) => task.monthId !== month.id),
+      contentPlan: (project.contentPlan || []).filter((item) => item.monthId !== month.id),
+      mediaPlan: (project.mediaPlan || []).filter((item) => item.monthId !== month.id),
+      plans: {
+        ...project.plans,
+        daily: (project.plans?.daily || []).filter((item) => item.monthId !== month.id),
+      },
+      calls: (project.calls || []).filter((item) => item.monthId !== month.id),
+    };
+    const fallbackMonthId = nextMonths.find((item) => item.status === "active")?.id || nextMonths[0]?.id || getCurrentMonthId();
+    setSelectedMonthId(fallbackMonthId);
+    onSaveProject(
+      nextProject,
+      { notifyText: `Workspace o'chirildi: ${month.label}`, auditText: `Workspace o'chirildi: ${month.label}`, page: "projects" }
     );
   }
 
@@ -750,7 +983,10 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
         project={project}
         selectedMonthId={selectedMonthId}
         onSelectMonth={setSelectedMonthId}
-        onCreateMonth={openNewMonth}
+        onCreateMonth={() => setShowWorkspaceCreate(true)}
+        onEditMonth={setWorkspaceModalMonth}
+        onToggleMonthStatus={toggleWorkspaceStatus}
+        onDeleteMonth={setWorkspaceDeleteTarget}
         editable={editable}
       />
 
@@ -799,6 +1035,38 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
           onSubmit={(next) => {
             onSaveProject({ ...project, ...next }, { notifyText: "Loyiha tahrirlandi", auditText: `Loyiha saqlandi: ${next.name}`, page: "projects" });
             setEditingProject(false);
+          }}
+        />
+      ) : null}
+
+      {showWorkspaceCreate ? (
+        <WorkspaceModal
+          onClose={() => setShowWorkspaceCreate(false)}
+          onSubmit={(nextMonth) => {
+            saveWorkspaceMonth(nextMonth, "create");
+            setShowWorkspaceCreate(false);
+          }}
+        />
+      ) : null}
+
+      {workspaceModalMonth ? (
+        <WorkspaceModal
+          initialValue={workspaceModalMonth}
+          onClose={() => setWorkspaceModalMonth(null)}
+          onSubmit={(nextMonth) => {
+            saveWorkspaceMonth(nextMonth, "edit");
+            setWorkspaceModalMonth(null);
+          }}
+        />
+      ) : null}
+
+      {workspaceDeleteTarget ? (
+        <ConfirmDialog
+          message={`"${workspaceDeleteTarget.label}" workspace butunlay o'chirilsinmi? Shu oynadagi task, kontent, media plan, rejalar va aloqalar ham olib tashlanadi.`}
+          onCancel={() => setWorkspaceDeleteTarget(null)}
+          onConfirm={() => {
+            deleteWorkspaceMonth(workspaceDeleteTarget);
+            setWorkspaceDeleteTarget(null);
           }}
         />
       ) : null}
