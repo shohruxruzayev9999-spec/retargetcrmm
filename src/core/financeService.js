@@ -84,7 +84,7 @@ export function buildFinancialDashboard({ projects = [], employees = [], employe
   });
 
   const totalRevenue = roundMoney(projectRows.reduce((sum, project) => sum + project.revenue, 0));
-  const totalSalaryExpense = roundMoney(employeeRows.reduce((sum, employee) => sum + employee.calculatedSalary, 0));
+  const totalSalaryExpense = roundMoney(employeeRows.reduce((sum, employee) => sum + employee.baseSalary, 0));
   const netProfit = Math.max(0, totalRevenue - totalSalaryExpense);
   const investorShare = roundMoney(netProfit * INVESTOR_SHARE_RATIO);
   const ceoShare = roundMoney(netProfit * CEO_SHARE_RATIO);

@@ -80,7 +80,7 @@ export const FinancePage = memo(function FinancePage({ projects, employees }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14, marginBottom: 18 }}>
         <StatCard label="Jami daromad" value={`${toMoney(summary.totalRevenue)} so'm`} hint="Barcha loyihalar narxi" color={T.colors.green} />
-        <StatCard label="Jami oylik xarajat" value={`${toMoney(summary.totalSalaryExpense)} so'm`} hint="Hisoblangan ish haqlari" color={T.colors.orange} />
+        <StatCard label="Jami oylik xarajat" value={`${toMoney(summary.totalSalaryExpense)} so'm`} hint="Barcha bazaviy oyliklar" color={T.colors.orange} />
         <StatCard label="Sof foyda" value={`${toMoney(summary.netProfit)} so'm`} hint="Daromad - oyliklar" color={T.colors.accent} />
         <StatCard label="Investor ulushi" value={`${toMoney(summary.investorShare)} so'm`} hint="35% ulush" color={T.colors.purple} />
         <StatCard label="CEO foydasi" value={`${toMoney(summary.ceoShare)} so'm`} hint="Qolgan 65%" color={T.colors.indigo} />
