@@ -23,7 +23,7 @@ import {
   healthScore, unreadNotifications, humanizeAuthError,
 } from "./core/utils.js";
 import {
-  canEdit, canViewReports, canManagePeople, canWorkInProject,
+  canEdit, canManagePeople, canWorkInProject,
   canManageProjectMeta, visibleProjects, visibleShoots, visibleEmployees,
   projectMembers, isProjectMember, canViewFinancialDashboard,
 } from "./core/permissions.js";
@@ -54,7 +54,6 @@ import { TeamPage }          from "./pages/TeamPage.jsx";
 import { ShootingPage }      from "./pages/ShootingPage.jsx";
 import { MeetingsPage }      from "./pages/MeetingsPage.jsx";
 import { NotificationsPage } from "./pages/NotificationsPage.jsx";
-import { ReportsPage }       from "./pages/ReportsPage.jsx";
 import { FinancePage }       from "./pages/FinancePage.jsx";
 import { WorkflowPage }      from "./pages/WorkflowPage.jsx";
 // ─── Firestore collection refs (ARCH-02 FIX: module-level, not per-render) ────
@@ -79,7 +78,6 @@ function Sidebar({ profile, page, onNavigate, onLogout, unreadCount }) {
     { id: "meetings",      label: "Uchrashuvlar",      icon: "◷" },
     { id: "notifications", label: "Bildirishnomalar",  icon: "◌", badge: unreadCount },
     ...(canViewFinancialDashboard(profile.role) ? [{ id: "finance", label: "Moliyaviy dashboard", icon: "◍" }] : []),
-    ...(canViewReports(profile.role) ? [{ id: "reports", label: "Hisobotlar", icon: "◈" }] : []),
     { id: "workflow",      label: "Workflow",          icon: "⋯" },
   ];
   return (
@@ -816,7 +814,6 @@ function AppShell() {
           {page === "meetings"      && <MeetingsPage profile={profile} meetings={meetingDocs} employees={employees} onAddMeeting={addMeeting} onDeleteMeeting={deleteMeeting} />}
           {page === "notifications" && <NotificationsPage notifications={notificationDocs} profile={profile} onMarkAllRead={markAllNotificationsRead} />}
           {page === "finance" && canViewFinancialDashboard(profile.role) && <FinancePage projects={projects} employees={employees} />}
-          {page === "reports" && canViewReports(profile.role) && <ReportsPage projects={projects} />}
           {page === "workflow"      && <WorkflowPage />}
         </main>
         <ToastStack toasts={toasts} />

@@ -1,7 +1,7 @@
 import React, { memo, useEffect, useMemo, useState, useCallback } from "react";
 import { T, PROJECT_STATUSES, TASK_STATUSES, CONTENT_STATUSES, PLAN_STATUSES, SHOOT_STATUSES, CALL_STATUSES, PRIORITIES, PLATFORMS, FORMATS, LIMITS, getCurrentMonthId, getMonthLabel } from "../core/constants.js";
 import { toMoney, clamp, isoNow, makeId, sortByRecent, indexById, calcProjectProgress, flattenPlans, splitPlans } from "../core/utils.js";
-import { canEdit, canViewReports, canWorkInProject, canManageProjectMeta, projectMembers } from "../core/permissions.js";
+import { canEdit, canWorkInProject, canManageProjectMeta, projectMembers } from "../core/permissions.js";
 import { normalizeComments, createComment, withRecordMeta } from "../core/normalizers.js";
 import { Avatar, Button, Card, PageHeader, Field, Modal, EmptyState, StatusBadge, StatusSelect, PriorityBadge, CircleProgress, StatCard, DataTable, Row, Cell, TeamSelector, CommentThread } from "../components/ui/index.jsx";
 
@@ -748,7 +748,6 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
           { id: "media", label: "Media plan" },
           { id: "plans", label: "Rejalar" },
           { id: "calls", label: "Aloqalar" },
-          ...(canViewReports(profile.role) ? [{ id: "report", label: "Hisobot" }] : []),
         ].map((item) => (
           <button
             key={item.id}
@@ -778,13 +777,6 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
       {tab === "media" ? <MediaPlanTab profile={profile} project={project} employees={employees} editable={sectionEditable} onUpdateProject={onSaveProject} /> : null}
       {tab === "plans" ? <PlansTab profile={profile} project={project} editable={sectionEditable} onUpdateProject={onSaveProject} /> : null}
       {tab === "calls" ? <CallsTab profile={profile} project={project} employees={employees} editable={sectionEditable} onUpdateProject={onSaveProject} /> : null}
-      {tab === "report" && canViewReports(profile.role) ? (
-        <ReportEditor
-          project={project}
-          editable={editable}
-          onChange={(report) => onSaveProject({ ...project, report }, { notifyText: "Hisobot yangilandi", auditText: "Loyiha hisobot ma'lumoti yangilandi", page: "reports" })}
-        />
-      ) : null}
 
       {editingProject ? (
         <ProjectFormModal

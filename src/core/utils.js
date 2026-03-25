@@ -21,7 +21,7 @@ export function initials(name = "?") {
 export function pageLabel(page) {
   return {
     dashboard: "Dashboard", projects: "Loyihalar", team: "Xodimlar",
-    shooting: "Syomka", meetings: "Uchrashuvlar", reports: "Hisobotlar",
+    shooting: "Syomka", meetings: "Uchrashuvlar",
     workflow: "Workflow", notifications: "Bildirishnomalar",
   }[page] || "CRM";
 }
