@@ -1,7 +1,7 @@
 import React, { memo, useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { T, PROJECT_STATUSES, TASK_STATUSES, CONTENT_STATUSES, PLAN_STATUSES, SHOOT_STATUSES, CALL_STATUSES, PRIORITIES, PLATFORMS, FORMATS, DEPARTMENTS, LIMITS } from "../core/constants.js";
 import { toMoney, clamp, isoNow, todayIso, makeId, sortByRecent, indexById, calcProjectProgress, healthScore } from "../core/utils.js";
-import { canEdit, canViewReports, canManagePeople, canWorkInProject, canManageProjectMeta, projectMembers, visibleProjects } from "../core/permissions.js";
+import { canEdit, canViewReports, canManagePeople, canWorkInProject, canManageProjectMeta, canViewProjectFinance, projectMembers, visibleProjects } from "../core/permissions.js";
 import { normalizeComments, createComment, withRecordMeta } from "../core/normalizers.js";
 import { Avatar, Button, Card, PageHeader, Field, Modal, EmptyState, SkeletonBlock, GridSkeleton, StatusBadge, StatusSelect, PriorityBadge, CircleProgress, StatCard, DataTable, Row, Cell, TeamSelector, CommentThread, EmojiPicker } from "../components/ui/index.jsx";
 import { ProjectDetailPage, ProjectFormModal } from "./ProjectDetailPage.jsx";
@@ -9,6 +9,7 @@ import { ProjectDetailPage, ProjectFormModal } from "./ProjectDetailPage.jsx";
 export const ProjectsPage = memo(function ProjectsPage({ profile, projects, employees, selectedProjectId, selectedProject, projectReady, onSelectProject, onBackToList, onCreateProject, onSaveProject, onDeleteProject, loading, progressByProjectId }) {
   const [showCreate, setShowCreate] = useState(false);
   const editable = canEdit(profile.role);
+  const canViewProjectMoney = canViewProjectFinance(profile.role);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
 
   if (selectedProject) {
@@ -81,7 +82,11 @@ export const ProjectsPage = memo(function ProjectsPage({ profile, projects, empl
                     )}
                     <div style={{ fontSize: 12, color: T.colors.textSecondary, marginTop: 8 }}>{project.type || "Xizmat turi kiritilmagan"}</div>
                     <div style={{ fontSize: 12, color: T.colors.textSecondary }}>Muddat: {project.end || "-"}</div>
-                    <div style={{ fontSize: 12, color: T.colors.textSecondary }}>Xizmat narxi: {project.servicePrice ? `${toMoney(project.servicePrice)} so'm` : "Kiritilmagan"}</div>
+                    {canViewProjectMoney ? (
+                      <div style={{ fontSize: 12, color: T.colors.textSecondary }}>
+                        Xizmat narxi: {project.servicePrice ? `${toMoney(project.servicePrice)} so'm` : "Kiritilmagan"}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, paddingTop: 12, borderTop: `1px solid ${T.colors.borderLight}` }}>

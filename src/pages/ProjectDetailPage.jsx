@@ -4,7 +4,7 @@ import {
   CALL_STATUSES, PRIORITIES, PLATFORMS, FORMATS, STATUS_META, getCurrentMonthId, getMonthLabel,
 } from "../core/constants.js";
 import { toMoney, isoNow, makeId, indexById, calcProjectProgress } from "../core/utils.js";
-import { canWorkInProject, canManageProjectMeta, projectMembers } from "../core/permissions.js";
+import { canWorkInProject, canManageProjectMeta, canViewProjectFinance, projectMembers } from "../core/permissions.js";
 import { normalizeComments, createComment, withRecordMeta } from "../core/normalizers.js";
 import {
   Avatar, Button, Card, Field, Modal, EmptyState, StatusBadge,
@@ -856,6 +856,7 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
   const [showWorkspaceCreate, setShowWorkspaceCreate] = useState(false);
   const [workspaceDeleteTarget, setWorkspaceDeleteTarget] = useState(null);
   const editable = canManageProjectMeta(profile, project);
+  const canViewProjectMoney = canViewProjectFinance(profile.role);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
   const manager = employeeMap[project.managerId];
   const progress = calcProjectProgress(project);
@@ -948,7 +949,7 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", color: T.colors.textSecondary, fontSize: 12 }}>
               <span>📅 {project.start || "-"} → {project.end || "-"}</span>
               <span>👥 {project.teamIds.length} kishi</span>
-              <span>💰 {project.servicePrice ? `${toMoney(project.servicePrice)} so'm` : "Xizmat narxi kiritilmagan"}</span>
+              {canViewProjectMoney ? <span>💰 {project.servicePrice ? `${toMoney(project.servicePrice)} so'm` : "Xizmat narxi kiritilmagan"}</span> : null}
               {profile.role === "EMPLOYEE" ? <span>• Siz bu loyiha workspace ichida ishlay olasiz</span> : null}
             </div>
             {project.teamIds.length ? (

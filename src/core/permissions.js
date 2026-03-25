@@ -3,12 +3,14 @@ const EDITOR_ROLES      = new Set(["CEO", "MANAGER", "SUPERVISOR"]);
 // UX-01 FIX: canViewReports — toza va aniq
 const REPORT_VIEW_ROLES = new Set(["CEO", "INVESTOR"]);
 const PEOPLE_MGMT_ROLES = new Set(["CEO", "MANAGER", "SUPERVISOR"]);
+const PROJECT_FINANCE_VIEW_ROLES = new Set(["CEO", "INVESTOR"]);
 
 // ─── Permission Helpers ───────────────────────────────────────────────────────
 export function canEdit(role)          { return EDITOR_ROLES.has(role); }
 export function canViewReports(role)   { return REPORT_VIEW_ROLES.has(role); }
 export function canManagePeople(role)  { return PEOPLE_MGMT_ROLES.has(role); }
 export function canViewFinancialDashboard(role) { return role === "CEO"; }
+export function canViewProjectFinance(role) { return PROJECT_FINANCE_VIEW_ROLES.has(role); }
 
 export function isProjectMember(profile, project) {
   if (!profile || !project) return false;
