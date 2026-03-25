@@ -75,7 +75,7 @@ export const TeamPage = memo(function TeamPage({ profile, employees, projects, e
                       </div>
                       <div style={{ marginTop: 12, display: "grid", gap: 6, fontSize: 12, color: T.colors.textSecondary }}>
                         <div>{employee.email || "Email ko'rsatilmagan"}</div>
-                        <div>{canViewCompensation ? (employee.salary ? `${toMoney(employee.salary)} so'm / oy` : "Oylik kiritilmagan") : "Oylik faqat CEO/Admin ga ko'rinadi"}</div>
+                        {canViewCompensation ? <div>{employee.salary ? `${toMoney(employee.salary)} so'm / oy` : "Oylik kiritilmagan"}</div> : null}
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           {projectAssignments.length ? projectAssignments.map((project) => (
                             <span key={project.id} style={{ background: T.colors.accentSoft, color: T.colors.accent, padding: "3px 8px", borderRadius: T.radius.full, fontSize: 11, fontWeight: 600 }}>
@@ -159,4 +159,3 @@ function EmployeeEditForm({ employee, onCancel, onSave, submitLabel = "Saqlash",
     </div>
   );
 }
-
