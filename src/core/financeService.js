@@ -24,10 +24,9 @@ export function calculateEmployeeFinancials(employee, metrics = {}) {
     Math.round(safeNumber(metrics?.assignedWork || metrics?.total || 0) || safeNumber(employee?.load || 0))
   );
   const completedWork = Math.max(0, Math.round(safeNumber(metrics?.completedWork || metrics?.completed || 0)));
-  const fallbackKpi = clamp(Math.round(safeNumber(employee?.kpiBase || 100)), 0, 100);
   const kpi = assignedWork > 0
     ? clamp(Math.round((completedWork / assignedWork) * 100), 0, 100)
-    : fallbackKpi;
+    : 100;
   const calculatedSalary = roundMoney(baseSalary * (kpi / 100));
 
   return {

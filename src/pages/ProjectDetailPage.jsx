@@ -715,6 +715,7 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", color: T.colors.textSecondary, fontSize: 12 }}>
               <span>📅 {project.start || "-"} → {project.end || "-"}</span>
               <span>👥 {project.teamIds.length} kishi</span>
+              <span>💰 {project.servicePrice ? `${toMoney(project.servicePrice)} so'm` : "Xizmat narxi kiritilmagan"}</span>
               {profile.role === "EMPLOYEE" ? <span>• Siz bu loyiha workspace ichida ishlay olasiz</span> : null}
             </div>
             {project.teamIds.length ? (
@@ -826,7 +827,7 @@ export function ProjectFormModal({ employees, initialValue, onClose, onSubmit })
   }
 
   function handleSubmit() {
-    if (!form.name.trim() || !form.client.trim()) return;
+    if (!form.name.trim() || !form.client.trim() || Number(form.servicePrice || 0) <= 0) return;
     onSubmit({ ...form, servicePrice: Number(form.servicePrice || 0), teamIds: Array.from(new Set([...form.teamIds, form.managerId].filter(Boolean))) });
   }
 
@@ -839,7 +840,7 @@ export function ProjectFormModal({ employees, initialValue, onClose, onSubmit })
         <Field label="Manager" value={form.managerId} onChange={(value) => update("managerId", value)} options={employees.map((employee) => ({ value: employee.id, label: employee.name }))} />
         <Field label="Boshlanish" type="date" value={form.start} onChange={(value) => update("start", value)} />
         <Field label="Deadline" type="date" value={form.end} onChange={(value) => update("end", value)} />
-        <Field label="Xizmat narxi (so'm)" type="number" value={form.servicePrice} onChange={(value) => update("servicePrice", value)} />
+        <Field label="Xizmat narxi (so'm)" type="number" required value={form.servicePrice} onChange={(value) => update("servicePrice", value)} />
         <Field label="Loyiha statusi" value={form.status} onChange={(value) => update("status", value)} options={PROJECT_STATUSES} />
         <Field label="Muhimlik" value={form.priority} onChange={(value) => update("priority", value)} options={PRIORITIES} />
       </div>

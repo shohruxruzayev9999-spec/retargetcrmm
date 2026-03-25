@@ -81,6 +81,7 @@ export const ProjectsPage = memo(function ProjectsPage({ profile, projects, empl
                     )}
                     <div style={{ fontSize: 12, color: T.colors.textSecondary, marginTop: 8 }}>{project.type || "Xizmat turi kiritilmagan"}</div>
                     <div style={{ fontSize: 12, color: T.colors.textSecondary }}>Muddat: {project.end || "-"}</div>
+                    <div style={{ fontSize: 12, color: T.colors.textSecondary }}>Xizmat narxi: {project.servicePrice ? `${toMoney(project.servicePrice)} so'm` : "Kiritilmagan"}</div>
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, paddingTop: 12, borderTop: `1px solid ${T.colors.borderLight}` }}>
