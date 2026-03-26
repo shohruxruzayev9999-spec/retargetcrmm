@@ -418,7 +418,28 @@ function AppShell() {
     if (!publicUsers.length) setPublicUsersReady(false);
     return onSnapshot(COLS.users, snap => {
       const next = snap.docs.map(e => normalizeStoredUser(e.id, e.data())).sort((a, b) => String(a.name).localeCompare(String(b.name)));
-      startTransition(() => { setPublicUsers(next); setPublicUsersReady(true); });
+      startTransition(() => {
+        setPublicUsers(next);
+        setPublicUsersReady(true);
+        const currentUserDoc = next.find((item) => item.id === profile.uid);
+        const currentUserEmail = String(profile.email || "").trim().toLowerCase();
+        const mergedAssignedProjectIds = Array.from(
+          new Set(
+            next
+              .filter((item) => String(item.email || "").trim().toLowerCase() === currentUserEmail)
+              .flatMap((item) => item.assignedProjectIds || [])
+          )
+        );
+        if (currentUserDoc) {
+          setProfile((current) => current ? {
+            ...current,
+            assignedProjectIds: mergedAssignedProjectIds.length ? mergedAssignedProjectIds : (currentUserDoc.assignedProjectIds || []),
+            role: currentUserDoc.roleCode || current.role,
+            dept: currentUserDoc.dept || current.dept,
+            title: currentUserDoc.title || current.title,
+          } : current);
+        }
+      });
     }, error => { console.error("[CRM] users:", error?.code); setPublicUsersReady(true); });
   }, [profile?.uid]);
 

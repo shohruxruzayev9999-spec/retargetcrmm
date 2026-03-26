@@ -19,9 +19,13 @@ export function canApproveVideo(role) {
   return new Set(["CEO", "MANAGER", "SUPERVISOR"]).has(role);
 }
 
+function hasAssignedProject(profile, project) {
+  return Boolean(profile && project && Array.isArray(profile.assignedProjectIds) && profile.assignedProjectIds.includes(project.id));
+}
+
 export function isProjectMember(profile, project) {
   if (!profile || !project) return false;
-  return project.managerId === profile.uid || (project.teamIds || []).includes(profile.uid);
+  return project.managerId === profile.uid || (project.teamIds || []).includes(profile.uid) || hasAssignedProject(profile, project);
 }
 
 export function canWorkInProject(profile, project) {
@@ -38,7 +42,7 @@ export function visibleProjects(profile, projects) {
   if (!profile) return [];
   if (profile.role === "EMPLOYEE") {
     return projects.filter(p =>
-      !p.archived && (p.teamIds.includes(profile.uid) || p.managerId === profile.uid)
+      !p.archived && (p.teamIds.includes(profile.uid) || p.managerId === profile.uid || hasAssignedProject(profile, p))
     );
   }
   return projects.filter(p => !p.archived);
@@ -56,6 +60,11 @@ export function visibleEmployees(profile, employees) {
 
 export function projectMembers(project, employees) {
   const ids = new Set([project?.managerId, ...(project?.teamIds || [])].filter(Boolean));
+  (employees || []).forEach((employee) => {
+    if (Array.isArray(employee?.assignedProjectIds) && employee.assignedProjectIds.includes(project?.id)) {
+      ids.add(employee.id);
+    }
+  });
   const list = employees.filter(e => ids.has(e.id));
   return list.length ? list : employees;
 }

@@ -75,18 +75,53 @@ export function createMetaDocs(meta, actor) {
 export function buildAssignedProjectIdOps(nextProjects, affectedUserIds, currentPublicUsers) {
   const ops = [];
   const assignmentMap = {};
+  const usersById = new Map((currentPublicUsers || []).map((user) => [user.id, user]));
+  const emailToIds = new Map();
+
+  function normalizedEmail(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  (currentPublicUsers || []).forEach((user) => {
+    const email = normalizedEmail(user?.email);
+    if (!email) return;
+    if (!emailToIds.has(email)) emailToIds.set(email, new Set());
+    emailToIds.get(email).add(user.id);
+  });
+
+  function aliasIdsForUserId(userId) {
+    const user = usersById.get(userId);
+    const email = normalizedEmail(user?.email);
+    if (!email || !emailToIds.has(email)) return [userId];
+    return Array.from(emailToIds.get(email));
+  }
+
   nextProjects.forEach(p => {
     [p.managerId, ...(p.teamIds || [])].filter(Boolean).forEach(uid => {
-      if (!assignmentMap[uid]) assignmentMap[uid] = [];
-      if (!assignmentMap[uid].includes(p.id)) assignmentMap[uid].push(p.id);
+      aliasIdsForUserId(uid).forEach((aliasId) => {
+        if (!assignmentMap[aliasId]) assignmentMap[aliasId] = [];
+        if (!assignmentMap[aliasId].includes(p.id)) assignmentMap[aliasId].push(p.id);
+      });
     });
   });
+
+  const expandedAffectedUserIds = new Set();
   for (const userId of affectedUserIds) {
-    const current = currentPublicUsers.find(u => u.id === userId)?.assignedProjectIds || [];
-    const next    = assignmentMap[userId] || [];
-    const same    = current.length === next.length && current.every(id => next.includes(id));
-    if (!same && db)
-      ops.push({ type: "set", ref: doc(db, "users", userId), data: { assignedProjectIds: next, updatedAt: isoNow() }, options: { merge: true } });
+    aliasIdsForUserId(userId).forEach((aliasId) => expandedAffectedUserIds.add(aliasId));
+  }
+
+  for (const userId of expandedAffectedUserIds) {
+    const current = usersById.get(userId)?.assignedProjectIds || [];
+    const next = assignmentMap[userId] || [];
+    const same = current.length === next.length && current.every(id => next.includes(id));
+    if (!same && db) {
+      ops.push({
+        type: "set",
+        ref: doc(db, "users", userId),
+        data: { assignedProjectIds: next, updatedAt: isoNow() },
+        options: { merge: true },
+      });
+    }
   }
   return ops;
 }
