@@ -25,6 +25,13 @@ const SHEET_INPUT_STYLE = {
   fontFamily: T.font,
   boxSizing: "border-box",
 };
+const WORKSPACE_TAB_META = [
+  { id: "tasks", label: "Topshiriqlar" },
+  { id: "content", label: "Kontent reja" },
+  { id: "media", label: "Media plan" },
+  { id: "plans", label: "Rejalar" },
+  { id: "calls", label: "Aloqalar" },
+];
 
 function getMonthList(months) {
   if (Array.isArray(months) && months.length) return months;
@@ -138,115 +145,111 @@ const MonthWorkspaceCards = memo(function MonthWorkspaceCards({
 }) {
   const months = getMonthList(project.months);
   const employeeCount = Array.isArray(project.teamIds) ? project.teamIds.length : 0;
+  const selectedMonth = months.find((month) => month.id === selectedMonthId) || months[0];
+  const stats = buildMonthStats(project, selectedMonthId);
+  const progressColor = stats.progress >= 75 ? T.colors.green : stats.progress >= 40 ? T.colors.accent : T.colors.orange;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16, marginBottom: 20 }}>
-      {months.map((month) => {
-        const active = month.id === selectedMonthId;
-        const stats = buildMonthStats(project, month.id);
-        const progressColor = stats.progress >= 75 ? T.colors.green : stats.progress >= 40 ? T.colors.accent : T.colors.orange;
-        return (
-          <Card
-            key={month.id}
-            onClick={() => onSelectMonth(month.id)}
-            style={{
-              borderColor: active ? T.colors.accent : T.colors.border,
-              boxShadow: active ? T.shadow.md : T.shadow.sm,
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>{month.label || getMonthLabel(month.id)}</div>
-                <div style={{ marginTop: 2, fontSize: 12, color: T.colors.textSecondary }}>{month.status === "active" ? "Faol workspace" : "Arxiv workspace"}</div>
+    <Card style={{ marginBottom: 20, padding: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", flex: 1, minWidth: 260 }}>
+          {months.map((month) => {
+            const active = month.id === selectedMonthId;
+            return (
+              <button
+                key={month.id}
+                type="button"
+                onClick={() => onSelectMonth(month.id)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  border: `1px solid ${active ? T.colors.accent : T.colors.border}`,
+                  background: active ? T.colors.accentSoft : T.colors.borderLight,
+                  color: active ? T.colors.accent : T.colors.textSecondary,
+                  borderRadius: T.radius.full,
+                  padding: "9px 14px",
+                  fontFamily: T.font,
+                  fontSize: 13,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  boxShadow: active ? T.shadow.sm : "none",
+                }}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: month.status === "active" ? T.colors.green : T.colors.textTertiary }} />
+                {month.label || getMonthLabel(month.id)}
+              </button>
+            );
+          })}
+        </div>
+        {editable ? (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Button onClick={onCreateMonth}>+ Yangi oyna</Button>
+            {selectedMonth ? (
+              <>
+                <Button variant="secondary" onClick={() => onEditMonth(selectedMonth)}>Nomlash</Button>
+                <Button variant={selectedMonth.status === "active" ? "warning" : "success"} onClick={() => onToggleMonthStatus(selectedMonth)}>
+                  {selectedMonth.status === "active" ? "Arxiv" : "Faol qilish"}
+                </Button>
+                <Button variant="danger" onClick={() => onDeleteMonth(selectedMonth)}>O'chirish</Button>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "minmax(240px, 1.15fr) minmax(280px, 1fr)", gap: 16, alignItems: "stretch" }}>
+        <div style={{ background: T.colors.borderLight, borderRadius: T.radius.xl, padding: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 900 }}>{selectedMonth?.label || getMonthLabel(selectedMonthId)}</div>
+              <div style={{ marginTop: 4, color: T.colors.textSecondary, fontSize: 13 }}>
+                {selectedMonth?.status === "active" ? "Faol workspace" : "Arxiv workspace"}
               </div>
-              <span style={{ background: active ? T.colors.accentSoft : T.colors.borderLight, color: active ? T.colors.accent : T.colors.textSecondary, borderRadius: T.radius.full, padding: "6px 10px", fontSize: 12, fontWeight: 800 }}>
-                {month.status === "active" ? "🟢 Faol" : "📦 Arxiv"}
-              </span>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 14, marginBottom: 14 }}>
-              <div style={{ position: "relative", flexShrink: 0 }}>
-                <CircleProgress pct={stats.progress} size={72} stroke={7} color={progressColor} />
-                <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-                  <span style={{ fontSize: 15, fontWeight: 800, color: progressColor }}>{stats.progress}%</span>
-                  <span style={{ fontSize: 10, color: T.colors.textTertiary }}>{stats.doneTasks}/{stats.totalTasks}</span>
-                </div>
-              </div>
-              <div style={{ flex: 1 }}>
-                <StatusBadge value={project.status} />
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
-                  {MONTH_SECTIONS.map((label) => (
-                    <span key={label} style={{ padding: "5px 9px", borderRadius: T.radius.full, background: T.colors.borderLight, color: T.colors.textSecondary, fontSize: 11, fontWeight: 700 }}>
-                      {label}
-                    </span>
-                  ))}
-                </div>
+            <span style={{ background: selectedMonth?.status === "active" ? T.colors.accentSoft : T.colors.border, color: selectedMonth?.status === "active" ? T.colors.accent : T.colors.textSecondary, borderRadius: T.radius.full, padding: "7px 11px", fontSize: 12, fontWeight: 800 }}>
+              {selectedMonth?.status === "active" ? "Faol" : "Arxiv"}
+            </span>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 16 }}>
+            <div style={{ position: "relative", flexShrink: 0 }}>
+              <CircleProgress pct={stats.progress} size={76} stroke={7} color={progressColor} />
+              <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ fontSize: 16, fontWeight: 900, color: progressColor }}>{stats.progress}%</span>
+                <span style={{ fontSize: 11, color: T.colors.textTertiary }}>{stats.doneTasks}/{stats.totalTasks}</span>
               </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, marginBottom: 12 }}>
-              {[
-                { label: "Task", value: stats.totalTasks, color: T.colors.accent },
-                { label: "Kontent", value: stats.contentCount, color: T.colors.green },
-                { label: "Media", value: stats.mediaCount, color: T.colors.orange },
-                { label: "Reja", value: stats.plansCount + stats.callsCount, color: T.colors.purple },
-              ].map((item) => (
-                <div key={item.label} style={{ background: T.colors.borderLight, borderRadius: T.radius.lg, padding: "10px 8px", textAlign: "center" }}>
-                  <div style={{ fontSize: 17, fontWeight: 900, color: item.color }}>{item.value}</div>
-                  <div style={{ marginTop: 2, fontSize: 11, color: T.colors.textSecondary }}>{item.label}</div>
-                </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {MONTH_SECTIONS.map((label) => (
+                <span key={label} style={{ padding: "7px 11px", borderRadius: T.radius.full, background: T.colors.surface, color: T.colors.textSecondary, fontSize: 12, fontWeight: 700, border: `1px solid ${T.colors.border}` }}>
+                  {label}
+                </span>
               ))}
             </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, paddingTop: 12, borderTop: `1px solid ${T.colors.borderLight}` }}>
-              <span style={{ fontSize: 12, color: T.colors.textSecondary }}>{employeeCount} kishi biriktirilgan</span>
-              <span style={{ fontSize: 12, fontWeight: 700, color: active ? T.colors.accent : T.colors.textSecondary }}>{active ? "Ochiq" : "Ochish"}</span>
-            </div>
-            {editable && active ? (
-              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-                <Button
-                  variant="secondary"
-                  style={{ padding: "6px 10px" }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onEditMonth(month);
-                  }}
-                >
-                  Tahrirlash
-                </Button>
-                <Button
-                  variant={month.status === "active" ? "warning" : "success"}
-                  style={{ padding: "6px 10px" }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onToggleMonthStatus(month);
-                  }}
-                >
-                  {month.status === "active" ? "Arxivga o'tkazish" : "Faollashtirish"}
-                </Button>
-                <Button
-                  variant="danger"
-                  style={{ padding: "6px 10px" }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onDeleteMonth(month);
-                  }}
-                >
-                  O'chirish
-                </Button>
-              </div>
-            ) : null}
-          </Card>
-        );
-      })}
-
-      {editable ? (
-        <Card onClick={onCreateMonth} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 250, borderStyle: "dashed" }}>
-          <div style={{ fontSize: 34, color: T.colors.accent, lineHeight: 1 }}>＋</div>
-          <div style={{ marginTop: 12, fontWeight: 800 }}>Yangi oyna qo'shish</div>
-          <div style={{ marginTop: 6, fontSize: 12, color: T.colors.textSecondary, textAlign: "center", maxWidth: 220 }}>
-            Yangi workspace yarating, nom bering va kerak bo'lsa uni faol yoki arxiv holatga o'tkazing.
           </div>
-        </Card>
-      ) : null}
-    </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
+          {[
+            { label: "Task", value: stats.totalTasks, color: T.colors.accent },
+            { label: "Kontent", value: stats.contentCount, color: T.colors.green },
+            { label: "Media", value: stats.mediaCount, color: T.colors.orange },
+            { label: "Rejalar", value: stats.plansCount, color: T.colors.purple },
+            { label: "Aloqalar", value: stats.callsCount, color: T.colors.indigo },
+          ].map((item) => (
+            <div key={item.label} style={{ background: T.colors.borderLight, borderRadius: T.radius.xl, padding: "16px 10px", display: "flex", flexDirection: "column", justifyContent: "center", minHeight: 110 }}>
+              <div style={{ fontSize: 22, fontWeight: 900, color: item.color, textAlign: "center" }}>{item.value}</div>
+              <div style={{ marginTop: 6, textAlign: "center", fontSize: 12, color: T.colors.textSecondary, fontWeight: 700 }}>{item.label}</div>
+            </div>
+          ))}
+          <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 4, color: T.colors.textSecondary, fontSize: 12 }}>
+            <span>{employeeCount} kishi biriktirilgan</span>
+            <StatusBadge value={project.status} />
+          </div>
+        </div>
+      </div>
+    </Card>
   );
 });
 
@@ -266,6 +269,7 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
     comments: [],
   });
   const [editingTask, setEditingTask] = useState("");
+  const [showComposer, setShowComposer] = useState(false);
   const filteredTasks = monthScopedTasks(project.tasks || [], selectedMonthId, monthsExist);
   const legacyTasks = monthsExist
     ? (project.tasks || []).filter((task) => !task.monthId && !taskMatchesMonth(task, selectedMonthId, true))
@@ -282,11 +286,13 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
       comments: [],
     });
     setEditingTask("");
+    setShowComposer(false);
   }
 
   function openForEdit(task) {
     setEditingTask(task.id);
     setDraft({ ...task });
+    setShowComposer(true);
   }
 
   function saveTask() {
@@ -326,16 +332,33 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
     return tasks.map((task) => {
       const owner = employeeMap[task.ownerId];
       const canChangeStatus = sectionEditable;
+      const done = task.status === "Bajarildi";
+      const overdue = task.deadline && task.deadline < isoNow().slice(0, 10) && !done;
       return (
         <Row key={task.id}>
-          <Cell style={{ fontWeight: 800 }}>{task.name}</Cell>
-          <Cell>{owner?.name || "Biriktirilmagan"}</Cell>
+          <Cell style={{ fontWeight: 800 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ width: 18, height: 18, borderRadius: 6, background: done ? T.colors.green : T.colors.surface, border: `1px solid ${done ? T.colors.green : T.colors.border}`, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 11, flexShrink: 0 }}>
+                {done ? "✓" : ""}
+              </span>
+              <div>
+                <div>{task.name}</div>
+                {task.note ? <div style={{ marginTop: 4, fontSize: 12, color: T.colors.textMuted }}>{task.note}</div> : null}
+              </div>
+            </div>
+          </Cell>
+          <Cell>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {owner ? <Avatar name={owner.name} url={owner.avatarUrl} size={28} /> : null}
+              <span>{owner?.name || "Biriktirilmagan"}</span>
+            </div>
+          </Cell>
           <Cell>{task.start || "-"}</Cell>
-          <Cell style={{ fontWeight: 800 }}>{task.deadline || "-"}</Cell>
+          <Cell style={{ fontWeight: 800, color: overdue ? T.colors.red : T.colors.text }}>{task.deadline || "-"}</Cell>
           <Cell>
             <StatusSelect value={task.status} options={TASK_STATUSES} onChange={canChangeStatus ? (status) => updateTaskStatus(task.id, status) : null} disabled={!canChangeStatus} />
           </Cell>
-          <Cell style={{ color: T.colors.textMuted }}>{task.note || "-"}</Cell>
+          <Cell style={{ color: T.colors.textMuted }}>{task.note || "—"}</Cell>
           <Cell>
             <CommentThread comments={task.comments} onAddComment={sectionEditable ? (text) => addComment(task.id, text) : null} placeholder="Task bo'yicha izoh yozing..." />
           </Cell>
@@ -361,10 +384,10 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
           <div style={{ fontSize: 18, fontWeight: 900 }}>Topshiriqlar</div>
           <div style={{ marginTop: 4, fontSize: 12, color: T.colors.textSecondary }}>{getMonthLabel(selectedMonthId)} workspace</div>
         </div>
-        {sectionEditable ? <Button onClick={resetForm}>Yangi task</Button> : null}
+        {sectionEditable ? <Button onClick={() => { resetForm(); setShowComposer(true); }}>+ Task qo'shish</Button> : null}
       </div>
 
-      {sectionEditable ? (
+      {sectionEditable && showComposer ? (
         <Card style={{ background: T.colors.bg, marginBottom: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
             <Field label="Task nomi" value={draft.name} onChange={(value) => setDraft((prev) => ({ ...prev, name: value }))} />
@@ -375,7 +398,7 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
             <Field label="Izoh" value={draft.note} onChange={(value) => setDraft((prev) => ({ ...prev, note: value }))} />
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14 }}>
-            {editingTask ? <Button variant="secondary" onClick={resetForm}>Bekor</Button> : null}
+            <Button variant="secondary" onClick={resetForm}>Bekor</Button>
             <Button onClick={saveTask}>{editingTask ? "Yangilash" : "Qo'shish"}</Button>
           </div>
         </Card>
@@ -991,26 +1014,20 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
         editable={editable}
       />
 
-      <div style={{ display: "flex", gap: 4, marginBottom: 20, background: T.colors.bg, borderRadius: T.radius.md, padding: 4, overflowX: "auto" }}>
-        {[
-          { id: "tasks", label: "Topshiriqlar" },
-          { id: "content", label: "Kontent reja" },
-          { id: "media", label: "Media plan" },
-          { id: "plans", label: "Rejalar" },
-          { id: "calls", label: "Aloqalar" },
-        ].map((item) => (
+      <div style={{ display: "flex", gap: 6, marginBottom: 20, background: T.colors.surface, borderRadius: T.radius.xl, padding: 6, overflowX: "auto", border: `1px solid ${T.colors.border}`, boxShadow: T.shadow.sm }}>
+        {WORKSPACE_TAB_META.map((item) => (
           <button
             key={item.id}
             type="button"
             onClick={() => setTab(item.id)}
             style={{
-              padding: "7px 16px",
-              borderRadius: T.radius.sm,
-              border: "none",
-              background: tab === item.id ? T.colors.surface : "transparent",
-              color: tab === item.id ? T.colors.accent : T.colors.textSecondary,
-              fontWeight: 600,
-              fontSize: 13,
+              padding: "10px 18px",
+              borderRadius: T.radius.lg,
+              border: `1px solid ${tab === item.id ? T.colors.border : "transparent"}`,
+              background: tab === item.id ? T.colors.borderLight : "transparent",
+              color: tab === item.id ? T.colors.text : T.colors.textSecondary,
+              fontWeight: 800,
+              fontSize: 14,
               cursor: "pointer",
               fontFamily: T.font,
               boxShadow: tab === item.id ? T.shadow.sm : "none",
