@@ -11,6 +11,13 @@ export function canViewReports(role)   { return REPORT_VIEW_ROLES.has(role); }
 export function canManagePeople(role)  { return PEOPLE_MGMT_ROLES.has(role); }
 export function canViewFinancialDashboard(role) { return role === "CEO"; }
 export function canViewProjectFinance(role) { return PROJECT_FINANCE_VIEW_ROLES.has(role); }
+export function canEditOwnVideoTask(profile, task) {
+  const roleCode = profile?.roleCode || profile?.role;
+  return roleCode === "EDITOR" && task?.montajorId === profile?.uid;
+}
+export function canApproveVideo(role) {
+  return new Set(["CEO", "MANAGER", "SUPERVISOR"]).has(role);
+}
 
 export function isProjectMember(profile, project) {
   if (!profile || !project) return false;

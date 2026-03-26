@@ -1,4 +1,4 @@
-import { CRM_CACHE_KEY, SCHEMA_VERSION } from "./constants.js";
+import { CRM_CACHE_KEY, SCHEMA_VERSION, VIDEO_FORMATS } from "./constants.js";
 
 // ─── ID / Time ────────────────────────────────────────────────────────────────
 export function makeId(prefix = "id") {
@@ -125,7 +125,21 @@ export function buildProjectCaches(projects) {
 
   const ensureEmployee = id => {
     if (!id) return null;
-    if (!employeeStats.has(id)) employeeStats.set(id, { total: 0, completed: 0, approved: 0, active: 0, overdue: 0, projects: 0 });
+    if (!employeeStats.has(id)) {
+      employeeStats.set(id, {
+        total: 0,
+        completed: 0,
+        approved: 0,
+        active: 0,
+        overdue: 0,
+        projects: 0,
+        videoDone: 0,
+        videoRevision: 0,
+        videoFirstApproval: 0,
+        videoDeadlineMet: 0,
+        videoActive: 0,
+      });
+    }
     return employeeStats.get(id);
   };
 
@@ -159,6 +173,24 @@ export function buildProjectCaches(projects) {
           if (task.status === "Tasdiqlandi") stats.approved++;
           if (task.status === "Jarayonda" || task.status === "Ko'rib chiqilmoqda") stats.active++;
           if (task.deadline && task.deadline < todayIso() && task.status !== "Bajarildi") stats.overdue++;
+          const isVideo = VIDEO_FORMATS.includes(task.format);
+          if (isVideo) {
+            if (task.status === "Tasdiqlandi") {
+              stats.videoDone = (stats.videoDone || 0) + 1;
+              if ((task.revisionCount || 0) === 0) {
+                stats.videoFirstApproval = (stats.videoFirstApproval || 0) + 1;
+              }
+              if (task.deadline && task.finishedAt && task.finishedAt <= task.deadline) {
+                stats.videoDeadlineMet = (stats.videoDeadlineMet || 0) + 1;
+              }
+            }
+            if (task.status === "Montajda") {
+              stats.videoActive = (stats.videoActive || 0) + 1;
+            }
+            if ((task.revisionCount || 0) > 0) {
+              stats.videoRevision = (stats.videoRevision || 0) + (task.revisionCount || 0);
+            }
+          }
         }
       }
     } else {
@@ -177,7 +209,15 @@ export function buildProjectCaches(projects) {
   const employeeMetricsById = {};
   for (const [id, stats] of employeeStats) {
     const score = stats.total ? Math.round(clamp(((stats.completed + stats.approved * 0.85 + stats.active * 0.55) / stats.total) * 100, 10, 100)) : 0;
-    employeeMetricsById[id] = { ...stats, kpi: score };
+    employeeMetricsById[id] = {
+      ...stats,
+      kpi: score,
+      videoDone: stats.videoDone || 0,
+      videoRevision: stats.videoRevision || 0,
+      videoFirstApproval: stats.videoFirstApproval || 0,
+      videoDeadlineMet: stats.videoDeadlineMet || 0,
+      videoActive: stats.videoActive || 0,
+    };
   }
 
   return {

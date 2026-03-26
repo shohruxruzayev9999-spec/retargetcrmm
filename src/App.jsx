@@ -55,6 +55,7 @@ import { ShootingPage }      from "./pages/ShootingPage.jsx";
 import { MeetingsPage }      from "./pages/MeetingsPage.jsx";
 import { NotificationsPage } from "./pages/NotificationsPage.jsx";
 import { FinancePage }       from "./pages/FinancePage.jsx";
+import { MontajPage }        from "./pages/MontajPage.jsx";
 import { WorkflowPage }      from "./pages/WorkflowPage.jsx";
 // ─── Firestore collection refs (ARCH-02 FIX: module-level, not per-render) ────
 // These are stable references — created once when module loads.
@@ -75,6 +76,7 @@ function Sidebar({ profile, page, onNavigate, onLogout, unreadCount }) {
     { id: "projects",      label: "Loyihalar",         icon: "◫" },
     { id: "team",          label: "Xodimlar",          icon: "◉" },
     { id: "shooting",      label: "Syomka",            icon: "◎" },
+    { id: "montaj",        label: "Montaj bo'limi",    icon: "✂" },
     { id: "meetings",      label: "Uchrashuvlar",      icon: "◷" },
     { id: "notifications", label: "Bildirishnomalar",  icon: "◌", badge: unreadCount },
     ...(canViewFinancialDashboard(profile.role) ? [{ id: "finance", label: "Moliyaviy dashboard", icon: "◍" }] : []),
@@ -811,6 +813,7 @@ function AppShell() {
           {page === "projects"      && <ProjectsPage profile={profile} projects={projects} employees={employees} selectedProjectId={selectedProjectId} selectedProject={selectedProject} projectReady={projectWorkspaceReady} onSelectProject={setSelectedProjectId} onBackToList={() => setSelectedProjectId("")} onCreateProject={createProject} onSaveProject={saveProject} onDeleteProject={deleteProject} loading={primaryLoading} progressByProjectId={projectCaches.progressByProjectId} />}
           {page === "team"          && <TeamPage profile={profile} employees={employees} projects={projects} employeeMetricsById={projectCaches.employeeMetricsById} assignmentsByEmployeeId={projectCaches.assignmentsByEmployeeId} onSaveEmployee={saveEmployee} onCreateEmployee={createEmployee} onDeleteEmployee={deleteEmployee} loading={teamLoading} />}
           {page === "shooting"      && <ShootingPage profile={profile} shoots={shoots} projects={projects} employees={employees} onSaveShoot={saveShoot} onDeleteShoot={deleteShoot} />}
+          {page === "montaj"        && <MontajPage profile={profile} projects={projects} employees={employees} employeeMetricsById={projectCaches.employeeMetricsById} onSaveVideoTask={saveProject} />}
           {page === "meetings"      && <MeetingsPage profile={profile} meetings={meetingDocs} employees={employees} onAddMeeting={addMeeting} onDeleteMeeting={deleteMeeting} />}
           {page === "notifications" && <NotificationsPage notifications={notificationDocs} profile={profile} onMarkAllRead={markAllNotificationsRead} />}
           {page === "finance" && canViewFinancialDashboard(profile.role) && <FinancePage projects={projects} employees={employees} />}

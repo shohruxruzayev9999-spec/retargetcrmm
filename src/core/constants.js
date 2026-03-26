@@ -28,6 +28,8 @@ export const ROLE_META = {
   MANAGER:    { label: "Menejer",      dept: "Project Management", title: "Loyiha menejeri" },
   SUPERVISOR: { label: "Boshqaruvchi", dept: "Boshqaruv",          title: "Boshqaruvchi" },
   INVESTOR:   { label: "Investor",     dept: "Investor",           title: "Investor" },
+  OPERATOR:   { label: "Operator",     dept: "Media bo'limi",      title: "Videograf/Operator" },
+  EDITOR:     { label: "Montajor",     dept: "Media bo'limi",      title: "Montajor" },
   EMPLOYEE:   { label: "Xodim",        dept: "SMM bo'limi",        title: "Xodim" },
 };
 
@@ -50,7 +52,9 @@ export const CALL_STATUSES     = COMMON_WORK_STATUSES;
 export const PRIORITIES        = ["Yuqori","O'rta","Past"];
 export const PLATFORMS         = ["Instagram","Facebook","TikTok","YouTube","Telegram"];
 export const FORMATS           = ["Post","Reels","Story","Video","Carousel","Live"];
+export const VIDEO_FORMATS     = ["Video", "Reels"];
 export const DEPARTMENTS       = ["SMM bo'limi","Target bo'limi","Media bo'limi","Sales bo'limi","Project Management","Boshqaruv"];
+export const MONTAJ_STATUSES   = ["Kutilmoqda","Montajda","Review","Revision","Tasdiqlandi"];
 
 export const EMOJI_GROUPS = [
   { id: "smileys",  label: "😊", name: "Smileys",  items: ["😀","😄","😁","🙂","😉","😍","🥰","🤩","😎","🥹","🤝","🙏"] },
@@ -66,6 +70,9 @@ export const STATUS_META = {
   "Jarayonda":           { bg: "#dbeafe", text: "#1d4ed8", border: "#93c5fd" },
   "Kutilmoqda":          { bg: "#fff7ed", text: "#c2410c", border: "#fdba74" },
   "Ko'rib chiqilmoqda":  { bg: "#ffedd5", text: "#c2410c", border: "#fdba74" },
+  "Montajda":            { bg: "#dbeafe", text: "#1d4ed8", border: "#93c5fd" },
+  "Review":              { bg: "#ffedd5", text: "#c2410c", border: "#fdba74" },
+  "Revision":            { bg: "#fee2e2", text: "#b91c1c", border: "#fca5a5" },
   "Tasdiqlangan":        { bg: "#dcfce7", text: "#15803d", border: "#86efac" },
   "Tasdiqlandi":         { bg: "#dcfce7", text: "#15803d", border: "#86efac" },
   "Tugallangan":         { bg: "#dcfce7", text: "#166534", border: "#4ade80" },
