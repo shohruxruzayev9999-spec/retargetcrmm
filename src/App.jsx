@@ -659,7 +659,9 @@ function AppShell() {
     if (!profile || !db) return;
     const currentMeta = projectDocsRef.current.find(i => i.id === project.id);
     const currentProject = selectedProjectRef.current?.id === project.id ? selectedProjectRef.current : hydrateProject(currentMeta || project);
-    if (!canWorkInProject(profile, currentProject) && !canManageProjectMeta(profile, currentProject)) return;
+    const canWorkProject = canWorkInProject(profile, currentProject);
+    const canWriteMeta = canManageProjectMeta(profile, currentProject);
+    if (!canWorkProject && !canWriteMeta) return;
 
     const hasWs = selectedProjectRef.current?.id === project.id || Array.isArray(project.tasks) || Array.isArray(project.contentPlan) || Array.isArray(project.mediaPlan) || Array.isArray(project.calls) || Boolean(project.plans);
     const next = normalizeProject({ ...currentProject, ...project, ...(canEdit(profile.role) ? {} : { managerId: currentProject.managerId, teamIds: currentProject.teamIds }), tasks: hasWs ? (Array.isArray(project.tasks) ? project.tasks : currentProject.tasks) : currentProject.tasks, contentPlan: hasWs ? (Array.isArray(project.contentPlan) ? project.contentPlan : currentProject.contentPlan) : currentProject.contentPlan, mediaPlan: hasWs ? (Array.isArray(project.mediaPlan) ? project.mediaPlan : currentProject.mediaPlan) : currentProject.mediaPlan, plans: hasWs ? (project.plans || currentProject.plans) : currentProject.plans, calls: hasWs ? (Array.isArray(project.calls) ? project.calls : currentProject.calls) : currentProject.calls });
@@ -668,11 +670,13 @@ function AppShell() {
     const metaDoc     = projectMetaDocFromProject(next, profile, currentMeta);
     const nextProjects= nextProjectListAfterSave(metaDoc, next.id);
     const affected    = new Set([currentMeta?.managerId, ...(currentMeta?.teamIds || []), next.managerId, ...next.teamIds].filter(Boolean));
-    const metaDocs    = canEdit(profile.role) ? createMetaDocs(meta, profile) : [];
+    const workspaceOnly = Boolean(meta.workspaceOnly);
+    const shouldWriteProjectMeta = canWriteMeta && (!workspaceOnly || profile.role === "CEO");
+    const metaDocs    = canEdit(profile.role) && !workspaceOnly ? createMetaDocs(meta, profile) : [];
     const ops = [
-      { type: "set", ref: projectRef, data: metaDoc, options: { merge: true } },
+      ...(shouldWriteProjectMeta ? [{ type: "set", ref: projectRef, data: metaDoc, options: { merge: true } }] : []),
       ...metaDocs.map(i => ({ type: "set", ref: doc(db, i.collection, i.id), data: i.data, options: { merge: false } })),
-      ...buildAssignedProjectIdOps(nextProjects, affected, publicUsersRef.current),
+      ...((shouldWriteProjectMeta && !workspaceOnly) ? buildAssignedProjectIdOps(nextProjects, affected, publicUsersRef.current) : []),
     ];
     if (hasWs) {
       syncCollectionOperations(collection(projectRef, "tasks"),      currentProject.tasks,              next.tasks).forEach(o => ops.push(o));

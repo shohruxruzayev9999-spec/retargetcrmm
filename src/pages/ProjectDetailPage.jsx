@@ -391,14 +391,14 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
     const tasks = editingTask
       ? project.tasks.map((task) => (task.id === editingTask ? withRecordMeta({ ...task, ...normalizedDraft, monthId: normalizedDraft.monthId || selectedMonthId }, profile) : task))
       : [...project.tasks, withRecordMeta({ ...normalizedDraft, id: makeId("task"), monthId: selectedMonthId }, profile)];
-    onUpdateProject({ ...project, tasks }, { notifyText: `Task yangilandi: ${draft.name}`, auditText: `Task saqlandi: ${draft.name}`, page: "projects" });
+    onUpdateProject({ ...project, tasks }, { notifyText: `Task yangilandi: ${draft.name}`, auditText: `Task saqlandi: ${draft.name}`, page: "projects", workspaceOnly: true });
     resetForm();
   }
 
   function updateTaskStatus(taskId, status) {
     onUpdateProject(
       { ...project, tasks: project.tasks.map((task) => (task.id === taskId ? { ...task, status } : task)) },
-      { notifyText: "Task holati yangilandi", auditText: `Task statusi o'zgardi: ${status}`, page: "projects" }
+      { notifyText: "Task holati yangilandi", auditText: `Task statusi o'zgardi: ${status}`, page: "projects", workspaceOnly: true }
     );
   }
 
@@ -410,13 +410,13 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
           task.id === taskId ? { ...task, comments: [...normalizeComments(task.comments), createComment(text, profile)] } : task
         ),
       },
-      { notifyText: "Task izohi qo'shildi", auditText: "Taskga izoh qo'shildi", page: "projects" }
+      { notifyText: "Task izohi qo'shildi", auditText: "Taskga izoh qo'shildi", page: "projects", workspaceOnly: true }
     );
   }
 
   function deleteTask(taskId) {
     if (!window.confirm("Task o'chirilsinmi?")) return;
-    onUpdateProject({ ...project, tasks: project.tasks.filter((task) => task.id !== taskId) }, { notifyText: "Task o'chirildi", auditText: "Task o'chirildi", page: "projects" });
+    onUpdateProject({ ...project, tasks: project.tasks.filter((task) => task.id !== taskId) }, { notifyText: "Task o'chirildi", auditText: "Task o'chirildi", page: "projects", workspaceOnly: true });
   }
 
   function renderTaskRows(tasks) {
@@ -598,7 +598,7 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
         note: row.note.trim(),
         comments: normalizeComments(row.existing?.comments),
       }, profile));
-    onUpdateProject({ ...project, contentPlan: [...otherItems, ...nextItems] }, { notifyText: "Kontent reja saqlandi", auditText: `Kontent jadvali saqlandi: ${getMonthLabel(selectedMonthId)}`, page: "projects" });
+    onUpdateProject({ ...project, contentPlan: [...otherItems, ...nextItems] }, { notifyText: "Kontent reja saqlandi", auditText: `Kontent jadvali saqlandi: ${getMonthLabel(selectedMonthId)}`, page: "projects", workspaceOnly: true });
   }
 
   return (
@@ -716,7 +716,7 @@ function MonthlyMediaSheet({ profile, project, employees, selectedMonthId, onUpd
         note: row.note.trim(),
         comments: normalizeComments(row.existing?.comments),
       }, profile));
-    onUpdateProject({ ...project, mediaPlan: [...otherItems, ...nextItems] }, { notifyText: "Media plan saqlandi", auditText: `Media plan jadvali saqlandi: ${getMonthLabel(selectedMonthId)}`, page: "projects" });
+    onUpdateProject({ ...project, mediaPlan: [...otherItems, ...nextItems] }, { notifyText: "Media plan saqlandi", auditText: `Media plan jadvali saqlandi: ${getMonthLabel(selectedMonthId)}`, page: "projects", workspaceOnly: true });
   }
 
   return (
@@ -788,7 +788,7 @@ function MonthlyPlansSheet({ profile, project, selectedMonthId, onUpdateProject 
       }, profile));
     onUpdateProject(
       { ...project, plans: { ...project.plans, daily: [...otherItems, ...nextItems] } },
-      { notifyText: "Rejalar saqlandi", auditText: `Rejalar jadvali saqlandi: ${getMonthLabel(selectedMonthId)}`, page: "projects" }
+      { notifyText: "Rejalar saqlandi", auditText: `Rejalar jadvali saqlandi: ${getMonthLabel(selectedMonthId)}`, page: "projects", workspaceOnly: true }
     );
   }
 
@@ -859,7 +859,7 @@ function MonthlyCallsSheet({ profile, project, employees, selectedMonthId, onUpd
         status: row.status,
         comments: normalizeComments(row.existing?.comments),
       }, profile));
-    onUpdateProject({ ...project, calls: [...otherItems, ...nextItems] }, { notifyText: "Aloqalar saqlandi", auditText: `Aloqalar jadvali saqlandi: ${getMonthLabel(selectedMonthId)}`, page: "projects" });
+    onUpdateProject({ ...project, calls: [...otherItems, ...nextItems] }, { notifyText: "Aloqalar saqlandi", auditText: `Aloqalar jadvali saqlandi: ${getMonthLabel(selectedMonthId)}`, page: "projects", workspaceOnly: true });
   }
 
   return (
