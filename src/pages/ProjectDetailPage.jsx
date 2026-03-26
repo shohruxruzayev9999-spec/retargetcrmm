@@ -78,6 +78,49 @@ function monthScopedCount(items, monthId) {
   return (items || []).filter((item) => recordMatchesMonth(item, monthId)).length;
 }
 
+function hasContentRowValue(row, defaultOwnerId) {
+  return Boolean(
+    row.topic.trim() ||
+    row.caption.trim() ||
+    row.note.trim() ||
+    (row.ownerId || "") !== (defaultOwnerId || "") ||
+    row.status !== "Rejalashtirildi" ||
+    row.platform !== "Instagram" ||
+    row.format !== "Post"
+  );
+}
+
+function hasMediaRowValue(row, defaultOwnerId) {
+  return Boolean(
+    Number(row.budget || 0) > 0 ||
+    row.note.trim() ||
+    (row.ownerId || "") !== (defaultOwnerId || "") ||
+    row.status !== "Rejalashtirildi" ||
+    row.type !== "Post" ||
+    row.platform !== "Instagram" ||
+    row.format !== "Post"
+  );
+}
+
+function hasPlanRowValue(row) {
+  return Boolean(
+    row.title.trim() ||
+    row.note.trim() ||
+    row.taskId ||
+    row.status !== "Rejalashtirildi"
+  );
+}
+
+function hasCallRowValue(row, defaultWhoId) {
+  return Boolean(
+    row.result.trim() ||
+    row.next.trim() ||
+    (row.whoId || "") !== (defaultWhoId || "") ||
+    row.status !== "Yangi" ||
+    row.type !== "Call"
+  );
+}
+
 function buildMonthStats(project, monthId) {
   const monthsExist = Array.isArray(project.months) && project.months.length > 0;
   const scopedTasks = monthScopedTasks(project.tasks || [], monthId, monthsExist);
@@ -540,7 +583,7 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
   function saveRows() {
     const otherItems = contentItems.filter((item) => !recordMatchesMonth(item, selectedMonthId));
     const nextItems = rows
-      .filter((row) => row.topic.trim() || row.caption.trim() || row.note.trim())
+      .filter((row) => hasContentRowValue(row, defaultOwnerId))
       .map((row) => withRecordMeta({
         ...(row.existing || {}),
         id: row.existing?.id || makeId("content"),
@@ -658,7 +701,7 @@ function MonthlyMediaSheet({ profile, project, employees, selectedMonthId, onUpd
   function saveRows() {
     const otherItems = mediaItems.filter((item) => !recordMatchesMonth(item, selectedMonthId));
     const nextItems = rows
-      .filter((row) => Number(row.budget || 0) > 0 || row.note.trim())
+      .filter((row) => hasMediaRowValue(row, defaultOwnerId))
       .map((row) => withRecordMeta({
         ...(row.existing || {}),
         id: row.existing?.id || makeId("media"),
@@ -731,7 +774,7 @@ function MonthlyPlansSheet({ profile, project, selectedMonthId, onUpdateProject 
   function saveRows() {
     const otherItems = dailyPlans.filter((item) => !recordMatchesMonth(item, selectedMonthId));
     const nextItems = rows
-      .filter((row) => row.title.trim() || row.note.trim() || row.taskId)
+      .filter(hasPlanRowValue)
       .map((row) => withRecordMeta({
         ...(row.existing || {}),
         id: row.existing?.id || makeId("plan"),
@@ -803,7 +846,7 @@ function MonthlyCallsSheet({ profile, project, employees, selectedMonthId, onUpd
   function saveRows() {
     const otherItems = calls.filter((item) => !recordMatchesMonth(item, selectedMonthId));
     const nextItems = rows
-      .filter((row) => row.result.trim() || row.next.trim())
+      .filter((row) => hasCallRowValue(row, defaultWhoId))
       .map((row) => withRecordMeta({
         ...(row.existing || {}),
         id: row.existing?.id || makeId("call"),
