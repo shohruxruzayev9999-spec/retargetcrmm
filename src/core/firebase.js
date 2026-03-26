@@ -1,6 +1,6 @@
 import { initializeApp, getApps } from "firebase/app";
 import { browserLocalPersistence, getAuth, GoogleAuthProvider, setPersistence } from "firebase/auth";
-import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
+import { getFirestore, initializeFirestore, memoryLocalCache } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -23,7 +23,7 @@ if (hasFirebaseConfig) {
   auth = getAuth(app);
   try {
     db = initializeFirestore(app, {
-      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+      localCache: memoryLocalCache(),
     });
   } catch {
     db = getFirestore(app);
