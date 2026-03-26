@@ -82,6 +82,11 @@ function mergePlanWorkspace(basePlans = { daily: [], weekly: [], monthly: [] }, 
   };
 }
 
+function containsAllIds(expectedItems = [], actualItems = []) {
+  const actualIds = new Set((actualItems || []).filter(Boolean).map((item) => item.id));
+  return (expectedItems || []).every((item) => actualIds.has(item.id));
+}
+
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 function Sidebar({ profile, page, onNavigate, onLogout, unreadCount }) {
   const items = [
@@ -276,6 +281,7 @@ function AppShell() {
   const projectDocsRef         = useRef([]);
   const publicUsersRef         = useRef([]);
   const selectedProjectRef     = useRef(null);
+  const pendingWorkspaceRef    = useRef({});
   const initialCacheRef        = useRef(cachedCrm);
 
   // ── Confirm dialog (UX-02 FIX: no more window.confirm) ───────────────────
@@ -494,8 +500,32 @@ function AppShell() {
         if (pending.mediaPlan   !== null) patch.mediaPlan   = pending.mediaPlan;
         if (pending.plans       !== null) patch.plans       = pending.plans;
         if (pending.calls       !== null) patch.calls       = pending.calls;
+        const optimistic = pendingWorkspaceRef.current[pid];
+        let nextPatch = patch;
+        if (optimistic && optimistic.expiresAt > Date.now()) {
+          const optimisticWorkspace = optimistic.workspace || EMPTY_PROJECT_WORKSPACE;
+          nextPatch = {
+            ...patch,
+            tasks: patch.tasks ? mergeRecordsById(optimisticWorkspace.tasks, patch.tasks) : optimisticWorkspace.tasks,
+            contentPlan: patch.contentPlan ? mergeRecordsById(optimisticWorkspace.contentPlan, patch.contentPlan) : optimisticWorkspace.contentPlan,
+            mediaPlan: patch.mediaPlan ? mergeRecordsById(optimisticWorkspace.mediaPlan, patch.mediaPlan) : optimisticWorkspace.mediaPlan,
+            plans: patch.plans ? mergePlanWorkspace(optimisticWorkspace.plans, patch.plans) : optimisticWorkspace.plans,
+            calls: patch.calls ? mergeRecordsById(optimisticWorkspace.calls, patch.calls) : optimisticWorkspace.calls,
+          };
+          const optimisticSatisfied =
+            (!patch.tasks || containsAllIds(optimisticWorkspace.tasks, patch.tasks)) &&
+            (!patch.contentPlan || containsAllIds(optimisticWorkspace.contentPlan, patch.contentPlan)) &&
+            (!patch.mediaPlan || containsAllIds(optimisticWorkspace.mediaPlan, patch.mediaPlan)) &&
+            (!patch.calls || containsAllIds(optimisticWorkspace.calls, patch.calls)) &&
+            (!patch.plans || (
+              containsAllIds(optimisticWorkspace.plans?.daily, patch.plans.daily) &&
+              containsAllIds(optimisticWorkspace.plans?.weekly, patch.plans.weekly) &&
+              containsAllIds(optimisticWorkspace.plans?.monthly, patch.plans.monthly)
+            ));
+          if (optimisticSatisfied) delete pendingWorkspaceRef.current[pid];
+        }
         startTransition(() => {
-          setSelectedProjectWorkspace(cur => { const next = { ...cur, ...patch }; writeCache(projectWorkspaceCacheKey(pid), next); return next; });
+          setSelectedProjectWorkspace(cur => { const next = { ...cur, ...nextPatch }; writeCache(projectWorkspaceCacheKey(pid), next); return next; });
           if (["tasks","contentPlan","mediaPlan","plans","calls"].every(k => loaded.has(k))) setProjectWorkspaceReady(true);
         });
       }, 0);
@@ -629,9 +659,7 @@ function AppShell() {
     if (!profile || !db) return;
     const currentMeta = projectDocsRef.current.find(i => i.id === project.id);
     const currentProject = selectedProjectRef.current?.id === project.id ? selectedProjectRef.current : hydrateProject(currentMeta || project);
-    const canWorkProject = canWorkInProject(profile, currentProject);
-    const canWriteMeta = canManageProjectMeta(profile, currentProject);
-    if (!canWorkProject && !canWriteMeta) return;
+    if (!canWorkInProject(profile, currentProject) && !canManageProjectMeta(profile, currentProject)) return;
 
     const hasWs = selectedProjectRef.current?.id === project.id || Array.isArray(project.tasks) || Array.isArray(project.contentPlan) || Array.isArray(project.mediaPlan) || Array.isArray(project.calls) || Boolean(project.plans);
     const next = normalizeProject({ ...currentProject, ...project, ...(canEdit(profile.role) ? {} : { managerId: currentProject.managerId, teamIds: currentProject.teamIds }), tasks: hasWs ? (Array.isArray(project.tasks) ? project.tasks : currentProject.tasks) : currentProject.tasks, contentPlan: hasWs ? (Array.isArray(project.contentPlan) ? project.contentPlan : currentProject.contentPlan) : currentProject.contentPlan, mediaPlan: hasWs ? (Array.isArray(project.mediaPlan) ? project.mediaPlan : currentProject.mediaPlan) : currentProject.mediaPlan, plans: hasWs ? (project.plans || currentProject.plans) : currentProject.plans, calls: hasWs ? (Array.isArray(project.calls) ? project.calls : currentProject.calls) : currentProject.calls });
@@ -642,9 +670,9 @@ function AppShell() {
     const affected    = new Set([currentMeta?.managerId, ...(currentMeta?.teamIds || []), next.managerId, ...next.teamIds].filter(Boolean));
     const metaDocs    = canEdit(profile.role) ? createMetaDocs(meta, profile) : [];
     const ops = [
-      ...(canWriteMeta ? [{ type: "set", ref: projectRef, data: metaDoc, options: { merge: true } }] : []),
+      { type: "set", ref: projectRef, data: metaDoc, options: { merge: true } },
       ...metaDocs.map(i => ({ type: "set", ref: doc(db, i.collection, i.id), data: i.data, options: { merge: false } })),
-      ...(canWriteMeta ? buildAssignedProjectIdOps(nextProjects, affected, publicUsersRef.current) : []),
+      ...buildAssignedProjectIdOps(nextProjects, affected, publicUsersRef.current),
     ];
     if (hasWs) {
       syncCollectionOperations(collection(projectRef, "tasks"),      currentProject.tasks,              next.tasks).forEach(o => ops.push(o));
@@ -656,7 +684,12 @@ function AppShell() {
 
     startTransition(() => {
       setProjectDocs(nextProjects);
-      if (selectedProjectId === next.id) setSelectedProjectWorkspace({ tasks: next.tasks, contentPlan: next.contentPlan, mediaPlan: next.mediaPlan, plans: next.plans, calls: next.calls });
+      if (selectedProjectId === next.id) {
+        const optimisticWorkspace = { tasks: next.tasks, contentPlan: next.contentPlan, mediaPlan: next.mediaPlan, plans: next.plans, calls: next.calls };
+        pendingWorkspaceRef.current[next.id] = { workspace: optimisticWorkspace, expiresAt: Date.now() + 10000 };
+        writeCache(projectWorkspaceCacheKey(next.id), optimisticWorkspace);
+        setSelectedProjectWorkspace(optimisticWorkspace);
+      }
       applyOptimisticMetaDocs(metaDocs);
     });
 
@@ -665,6 +698,7 @@ function AppShell() {
       await commitBatchOperations(ops);
       if (meta.toastText || meta.notifyText) pushToast(meta.toastText || meta.notifyText);
     } catch (e) {
+      delete pendingWorkspaceRef.current[next.id];
       if (String(e?.code || "").includes("permission-denied")) {
         const cachedWs = readCache(projectWorkspaceCacheKey(next.id), null);
         if (cachedWs && selectedProjectId === next.id) startTransition(() => setSelectedProjectWorkspace({ tasks: cachedWs.tasks || [], contentPlan: cachedWs.contentPlan || [], mediaPlan: cachedWs.mediaPlan || [], plans: cachedWs.plans || { daily: [], weekly: [], monthly: [] }, calls: cachedWs.calls || [] }));
