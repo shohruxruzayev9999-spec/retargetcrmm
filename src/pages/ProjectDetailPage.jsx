@@ -1,7 +1,7 @@
 import React, { memo, useEffect, useMemo, useState } from "react";
 import {
   T, PROJECT_STATUSES, TASK_STATUSES, CONTENT_STATUSES, PLAN_STATUSES,
-  CALL_STATUSES, PRIORITIES, PLATFORMS, FORMATS, STATUS_META, getCurrentMonthId, getMonthLabel,
+  CALL_STATUSES, PRIORITIES, PLATFORMS, FORMATS, VIDEO_FORMATS, MONTAJ_STATUSES, STATUS_META, getCurrentMonthId, getMonthLabel,
 } from "../core/constants.js";
 import { toMoney, isoNow, makeId, indexById, calcProjectProgress } from "../core/utils.js";
 import { canWorkInProject, canManageProjectMeta, canViewProjectFinance, projectMembers } from "../core/permissions.js";
@@ -67,6 +67,11 @@ function taskMatchesMonth(task, monthId, monthsExist) {
 
 function monthScopedTasks(tasks, monthId, monthsExist) {
   return (tasks || []).filter((task) => taskMatchesMonth(task, monthId, monthsExist));
+}
+
+function isVideoTask(taskOrFormat) {
+  const format = typeof taskOrFormat === "string" ? taskOrFormat : taskOrFormat?.format;
+  return VIDEO_FORMATS.includes(format);
 }
 
 function monthScopedCount(items, monthId) {
@@ -256,12 +261,18 @@ const MonthWorkspaceCards = memo(function MonthWorkspaceCards({
 export const TasksTab = memo(function TasksTab({ profile, project, employees, selectedMonthId, editable, onUpdateProject }) {
   const sectionEditable = canWorkInProject(profile, project);
   const assignableEmployees = projectMembers(project, employees);
+  const editorEmployees = useMemo(
+    () => employees.filter((employee) => employee.roleCode === "EDITOR" || employee.dept === "Media bo'limi"),
+    [employees]
+  );
   const employeeMap = useMemo(() => indexById(employees), [employees]);
   const monthsExist = Array.isArray(project.months) && project.months.length > 0;
   const [showLegacyTasks, setShowLegacyTasks] = useState(false);
   const [draft, setDraft] = useState({
     name: "",
     ownerId: assignableEmployees[0]?.id || "",
+    format: "",
+    montajorId: "",
     start: "",
     deadline: "",
     status: "Rejalashtirildi",
@@ -279,6 +290,8 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
     setDraft({
       name: "",
       ownerId: assignableEmployees[0]?.id || "",
+      format: "",
+      montajorId: "",
       start: "",
       deadline: "",
       status: "Rejalashtirildi",
@@ -291,15 +304,49 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
 
   function openForEdit(task) {
     setEditingTask(task.id);
-    setDraft({ ...task });
+    setDraft({
+      name: task.name || "",
+      ownerId: task.ownerId || assignableEmployees[0]?.id || "",
+      format: task.format || "",
+      montajorId: task.montajorId || "",
+      start: task.start || "",
+      deadline: task.deadline || "",
+      status: task.status || "Rejalashtirildi",
+      note: task.note || "",
+      comments: task.comments || [],
+      monthId: task.monthId || selectedMonthId,
+    });
     setShowComposer(true);
+  }
+
+  function updateDraftFormat(value) {
+    setDraft((prev) => {
+      const nextIsVideo = isVideoTask(value);
+      const nextStatus = nextIsVideo
+        ? (MONTAJ_STATUSES.includes(prev.status) ? prev.status : "Kutilmoqda")
+        : (TASK_STATUSES.includes(prev.status) ? prev.status : "Rejalashtirildi");
+      return {
+        ...prev,
+        format: value,
+        montajorId: nextIsVideo ? prev.montajorId : "",
+        status: nextStatus,
+      };
+    });
   }
 
   function saveTask() {
     if (!draft.name?.trim()) return;
+    const normalizedDraft = {
+      ...draft,
+      format: draft.format || "",
+      montajorId: isVideoTask(draft.format) ? (draft.montajorId || "") : "",
+      status: isVideoTask(draft.format)
+        ? (MONTAJ_STATUSES.includes(draft.status) ? draft.status : "Kutilmoqda")
+        : (TASK_STATUSES.includes(draft.status) ? draft.status : "Rejalashtirildi"),
+    };
     const tasks = editingTask
-      ? project.tasks.map((task) => (task.id === editingTask ? withRecordMeta({ ...task, ...draft, monthId: draft.monthId || selectedMonthId }, profile) : task))
-      : [...project.tasks, withRecordMeta({ ...draft, id: makeId("task"), monthId: selectedMonthId }, profile)];
+      ? project.tasks.map((task) => (task.id === editingTask ? withRecordMeta({ ...task, ...normalizedDraft, monthId: normalizedDraft.monthId || selectedMonthId }, profile) : task))
+      : [...project.tasks, withRecordMeta({ ...normalizedDraft, id: makeId("task"), monthId: selectedMonthId }, profile)];
     onUpdateProject({ ...project, tasks }, { notifyText: `Task yangilandi: ${draft.name}`, auditText: `Task saqlandi: ${draft.name}`, page: "projects" });
     resetForm();
   }
@@ -331,9 +378,11 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
   function renderTaskRows(tasks) {
     return tasks.map((task) => {
       const owner = employeeMap[task.ownerId];
+      const assignedEditor = employeeMap[task.montajorId];
       const canChangeStatus = sectionEditable;
       const done = task.status === "Bajarildi";
       const overdue = task.deadline && task.deadline < isoNow().slice(0, 10) && !done;
+      const videoTask = isVideoTask(task);
       return (
         <Row key={task.id}>
           <Cell style={{ fontWeight: 800 }}>
@@ -343,6 +392,8 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
               </span>
               <div>
                 <div>{task.name}</div>
+                {task.format ? <div style={{ marginTop: 4, fontSize: 11, fontWeight: 800, color: T.colors.accent }}>{task.format}</div> : null}
+                {assignedEditor ? <div style={{ marginTop: 4, fontSize: 11, color: T.colors.textSecondary }}>Montajor: {assignedEditor.name}</div> : null}
                 {task.note ? <div style={{ marginTop: 4, fontSize: 12, color: T.colors.textMuted }}>{task.note}</div> : null}
               </div>
             </div>
@@ -356,7 +407,12 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
           <Cell>{task.start || "-"}</Cell>
           <Cell style={{ fontWeight: 800, color: overdue ? T.colors.red : T.colors.text }}>{task.deadline || "-"}</Cell>
           <Cell>
-            <StatusSelect value={task.status} options={TASK_STATUSES} onChange={canChangeStatus ? (status) => updateTaskStatus(task.id, status) : null} disabled={!canChangeStatus} />
+            <StatusSelect
+              value={task.status}
+              options={videoTask ? MONTAJ_STATUSES : TASK_STATUSES}
+              onChange={canChangeStatus ? (status) => updateTaskStatus(task.id, status) : null}
+              disabled={!canChangeStatus}
+            />
           </Cell>
           <Cell style={{ color: T.colors.textMuted }}>{task.note || "—"}</Cell>
           <Cell>
@@ -392,9 +448,23 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
             <Field label="Task nomi" value={draft.name} onChange={(value) => setDraft((prev) => ({ ...prev, name: value }))} />
             <Field label="Mas'ul" value={draft.ownerId} onChange={(value) => setDraft((prev) => ({ ...prev, ownerId: value }))} options={assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))} />
+            <Field label="Format" value={draft.format} onChange={updateDraftFormat} options={[{ value: "", label: "Format tanlanmagan" }, ...FORMATS.map((format) => ({ value: format, label: format }))]} />
+            {isVideoTask(draft.format) ? (
+              <Field
+                label="Montajor"
+                value={draft.montajorId}
+                onChange={(value) => setDraft((prev) => ({ ...prev, montajorId: value }))}
+                options={[{ value: "", label: "Keyin biriktiriladi" }, ...editorEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]}
+              />
+            ) : null}
             <Field label="Boshlanish" type="date" value={draft.start} onChange={(value) => setDraft((prev) => ({ ...prev, start: value }))} />
             <Field label="Deadline" type="date" value={draft.deadline} onChange={(value) => setDraft((prev) => ({ ...prev, deadline: value }))} />
-            <Field label="Status" value={draft.status} onChange={(value) => setDraft((prev) => ({ ...prev, status: value }))} options={TASK_STATUSES} />
+            <Field
+              label="Status"
+              value={draft.status}
+              onChange={(value) => setDraft((prev) => ({ ...prev, status: value }))}
+              options={isVideoTask(draft.format) ? MONTAJ_STATUSES : TASK_STATUSES}
+            />
             <Field label="Izoh" value={draft.note} onChange={(value) => setDraft((prev) => ({ ...prev, note: value }))} />
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14 }}>

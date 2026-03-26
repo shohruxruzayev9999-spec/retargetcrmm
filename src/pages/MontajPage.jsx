@@ -16,6 +16,12 @@ function monthMatches(task, monthId) {
   return task.monthId === monthId;
 }
 
+function isVideoLikeTask(task) {
+  if (VIDEO_FORMATS.includes(task?.format)) return true;
+  const probe = `${task?.name || ""} ${task?.note || ""}`.toLowerCase();
+  return ["video", "reels", "rolik", "montaj"].some((token) => probe.includes(token));
+}
+
 function collectMonthIds(projects) {
   const set = new Set([getCurrentMonthId()]);
   projects.forEach((project) => {
@@ -35,12 +41,14 @@ function calcEditorKpi(metrics) {
   return Math.max(0, Math.min(100, raw));
 }
 
-function buildVideoMetrics(tasks) {
+function buildVideoMetrics(tasks, employeeMap) {
   const stats = {};
   tasks.forEach((task) => {
-    if (!task.montajorId) return;
-    if (!stats[task.montajorId]) {
-      stats[task.montajorId] = {
+    const owner = employeeMap[task.ownerId];
+    const effectiveMontajorId = task.montajorId || ((owner?.roleCode === "EDITOR" || owner?.dept === "Media bo'limi") ? owner.id : "");
+    if (!effectiveMontajorId) return;
+    if (!stats[effectiveMontajorId]) {
+      stats[effectiveMontajorId] = {
         videoDone: 0,
         videoRevision: 0,
         videoFirstApproval: 0,
@@ -48,7 +56,7 @@ function buildVideoMetrics(tasks) {
         videoActive: 0,
       };
     }
-    const metric = stats[task.montajorId];
+    const metric = stats[effectiveMontajorId];
     if (task.status === "Tasdiqlandi") {
       metric.videoDone += 1;
       if ((task.revisionCount || 0) === 0) metric.videoFirstApproval += 1;
@@ -137,9 +145,13 @@ export const MontajPage = memo(function MontajPage({
     const result = [];
     for (const project of projectsWithTasks) {
       for (const task of (project.tasks || [])) {
-        if (VIDEO_FORMATS.includes(task.format)) {
+        if (isVideoLikeTask(task)) {
+          const owner = employeeMap[task.ownerId];
+          const effectiveMontajorId = task.montajorId || ((owner?.roleCode === "EDITOR" || owner?.dept === "Media bo'limi") ? owner.id : "");
           result.push({
             ...task,
+            format: task.format || "Video",
+            montajorId: effectiveMontajorId,
             projectId: project.id,
             projectName: project.name,
             project,
@@ -148,7 +160,7 @@ export const MontajPage = memo(function MontajPage({
       }
     }
     return result.sort((left, right) => String(left.deadline || "").localeCompare(String(right.deadline || "")));
-  }, [projectsWithTasks]);
+  }, [employeeMap, projectsWithTasks]);
 
   const monthScopedTasks = useMemo(
     () => allVideoTasks.filter((task) => monthMatches(task, selectedMonthId)),
@@ -175,7 +187,7 @@ export const MontajPage = memo(function MontajPage({
     [monthScopedTasks]
   );
 
-  const localMetricsById = useMemo(() => buildVideoMetrics(monthScopedTasks), [monthScopedTasks]);
+  const localMetricsById = useMemo(() => buildVideoMetrics(monthScopedTasks, employeeMap), [employeeMap, monthScopedTasks]);
 
   const editorCards = useMemo(
     () =>
