@@ -102,9 +102,9 @@ function NumberCellInput({ value, onChange, disabled, placeholder = "" }) {
   return <input type="number" value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} placeholder={placeholder} style={SHEET_INPUT_STYLE} />;
 }
 
-function SelectCellInput({ value, onChange, disabled, options }) {
+function SelectCellInput({ value, onChange, disabled, options, style = {} }) {
   return (
-    <select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} style={SHEET_INPUT_STYLE}>
+    <select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} style={{ ...SHEET_INPUT_STYLE, ...style }}>
       {options.map((option) => (
         typeof option === "object"
           ? <option key={option.value} value={option.value}>{option.label}</option>
@@ -114,7 +114,7 @@ function SelectCellInput({ value, onChange, disabled, options }) {
   );
 }
 
-function StatusCellSelect({ value, onChange, disabled, options }) {
+function StatusCellSelect({ value, onChange, disabled, options, style = {} }) {
   const meta = STATUS_META[value] || STATUS_META["Rejalashtirildi"];
   return (
     <select
@@ -127,6 +127,7 @@ function StatusCellSelect({ value, onChange, disabled, options }) {
         color: meta.text,
         border: `1px solid ${meta.border}`,
         fontWeight: 700,
+        ...style,
       }}
     >
       {options.map((option) => (
@@ -570,10 +571,10 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
         {rows.map((row) => (
           <Row key={row.day}>
             <Cell style={{ fontWeight: 800 }}>{String(row.day).padStart(2, "0")}</Cell>
-            <Cell><SelectCellInput value={row.platform} onChange={(value) => updateRow(row.day, "platform", value)} disabled={!sectionEditable} options={PLATFORMS} /></Cell>
-            <Cell><SelectCellInput value={row.format} onChange={(value) => updateRow(row.day, "format", value)} disabled={!sectionEditable} options={FORMATS} /></Cell>
-            <Cell><TextCellInput value={row.topic} onChange={(value) => updateRow(row.day, "topic", value)} disabled={!sectionEditable} placeholder="Mavzu" /></Cell>
-            <Cell>
+            <Cell style={{ minWidth: 165 }}><SelectCellInput value={row.platform} onChange={(value) => updateRow(row.day, "platform", value)} disabled={!sectionEditable} options={PLATFORMS} style={{ minWidth: 150 }} /></Cell>
+            <Cell style={{ minWidth: 165 }}><SelectCellInput value={row.format} onChange={(value) => updateRow(row.day, "format", value)} disabled={!sectionEditable} options={FORMATS} style={{ minWidth: 150 }} /></Cell>
+            <Cell style={{ minWidth: 190 }}><TextCellInput value={row.topic} onChange={(value) => updateRow(row.day, "topic", value)} disabled={!sectionEditable} placeholder="Mavzu" /></Cell>
+            <Cell style={{ minWidth: 360 }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <button
                   type="button"
@@ -599,9 +600,9 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
                 </div>
               </div>
             </Cell>
-            <Cell><SelectCellInput value={row.ownerId} onChange={(value) => updateRow(row.day, "ownerId", value)} disabled={!sectionEditable} options={[{ value: "", label: "Tanlanmagan" }, ...assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]} /></Cell>
-            <Cell><StatusCellSelect value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={CONTENT_STATUSES} /></Cell>
-            <Cell><TextCellInput value={row.note} onChange={(value) => updateRow(row.day, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
+            <Cell style={{ minWidth: 180 }}><SelectCellInput value={row.ownerId} onChange={(value) => updateRow(row.day, "ownerId", value)} disabled={!sectionEditable} options={[{ value: "", label: "Tanlanmagan" }, ...assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]} style={{ minWidth: 165 }} /></Cell>
+            <Cell style={{ minWidth: 170 }}><StatusCellSelect value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={CONTENT_STATUSES} style={{ minWidth: 150 }} /></Cell>
+            <Cell style={{ minWidth: 150 }}><TextCellInput value={row.note} onChange={(value) => updateRow(row.day, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
           </Row>
         ))}
       </DataTable>
@@ -688,13 +689,13 @@ function MonthlyMediaSheet({ profile, project, employees, selectedMonthId, onUpd
         {rows.map((row) => (
           <Row key={row.day}>
             <Cell style={{ fontWeight: 800 }}>{String(row.day).padStart(2, "0")}</Cell>
-            <Cell><SelectCellInput value={row.type} onChange={(value) => updateRow(row.day, "type", value)} disabled={!sectionEditable} options={FORMATS} /></Cell>
-            <Cell><SelectCellInput value={row.platform} onChange={(value) => updateRow(row.day, "platform", value)} disabled={!sectionEditable} options={PLATFORMS} /></Cell>
-            <Cell><SelectCellInput value={row.format} onChange={(value) => updateRow(row.day, "format", value)} disabled={!sectionEditable} options={FORMATS} /></Cell>
-            <Cell><SelectCellInput value={row.ownerId} onChange={(value) => updateRow(row.day, "ownerId", value)} disabled={!sectionEditable} options={[{ value: "", label: "Tanlanmagan" }, ...assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]} /></Cell>
-            <Cell><NumberCellInput value={row.budget} onChange={(value) => updateRow(row.day, "budget", value)} disabled={!sectionEditable} placeholder="0" /></Cell>
-            <Cell><StatusCellSelect value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={PLAN_STATUSES} /></Cell>
-            <Cell><TextCellInput value={row.note} onChange={(value) => updateRow(row.day, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
+            <Cell style={{ minWidth: 160 }}><SelectCellInput value={row.type} onChange={(value) => updateRow(row.day, "type", value)} disabled={!sectionEditable} options={FORMATS} style={{ minWidth: 145 }} /></Cell>
+            <Cell style={{ minWidth: 165 }}><SelectCellInput value={row.platform} onChange={(value) => updateRow(row.day, "platform", value)} disabled={!sectionEditable} options={PLATFORMS} style={{ minWidth: 150 }} /></Cell>
+            <Cell style={{ minWidth: 165 }}><SelectCellInput value={row.format} onChange={(value) => updateRow(row.day, "format", value)} disabled={!sectionEditable} options={FORMATS} style={{ minWidth: 150 }} /></Cell>
+            <Cell style={{ minWidth: 180 }}><SelectCellInput value={row.ownerId} onChange={(value) => updateRow(row.day, "ownerId", value)} disabled={!sectionEditable} options={[{ value: "", label: "Tanlanmagan" }, ...assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]} style={{ minWidth: 165 }} /></Cell>
+            <Cell style={{ minWidth: 140 }}><NumberCellInput value={row.budget} onChange={(value) => updateRow(row.day, "budget", value)} disabled={!sectionEditable} placeholder="0" /></Cell>
+            <Cell style={{ minWidth: 170 }}><StatusCellSelect value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={PLAN_STATUSES} style={{ minWidth: 150 }} /></Cell>
+            <Cell style={{ minWidth: 150 }}><TextCellInput value={row.note} onChange={(value) => updateRow(row.day, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
           </Row>
         ))}
       </DataTable>
