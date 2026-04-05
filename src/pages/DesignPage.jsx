@@ -15,6 +15,7 @@ import {
   Avatar, Button, Card, PageHeader, Field, Modal, EmptyState,
   StatusBadge, PriorityBadge, CircleProgress, CommentThread, StatusSelect, TeamSelector,
 } from "../components/ui/index.jsx";
+import { DesignTaskKanban } from "../components/DesignTaskKanban.jsx";
 
 const FILTER_OPTIONS = ["Barchasi", "Jarayonda", "Ko'rib chiqilmoqda", "Yakunlandi"];
 const CLOSED_STATUSES = new Set(["Yakunlandi", "Rad etildi"]);
@@ -288,6 +289,7 @@ export const DesignPage = memo(function DesignPage({
   const [projectFilter, setProjectFilter] = useState(null);
   const [editingTask, setEditingTask] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [viewMode, setViewMode] = useState("kanban");
 
   const employeeMap = useMemo(() => indexById(employees), [employees]);
   const projectMap = useMemo(() => indexById(projects), [projects]);
@@ -582,7 +584,7 @@ export const DesignPage = memo(function DesignPage({
             <div style={{ fontSize: 13, fontWeight: 700, color: T.colors.text }}>
               {projectFilter ? projectMap[projectFilter]?.name || "Barcha TZlar" : "Barcha TZlar"}
             </div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
               {filterButtons.map((item) => (
                 <button
                   key={item.label}
@@ -603,6 +605,42 @@ export const DesignPage = memo(function DesignPage({
                   {item.label}
                 </button>
               ))}
+              <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("kanban")}
+                  style={{
+                    border: "none",
+                    borderRadius: T.radius.md,
+                    padding: "5px 10px",
+                    fontSize: 11,
+                    fontWeight: viewMode === "kanban" ? 700 : 500,
+                    fontFamily: T.font,
+                    cursor: "pointer",
+                    background: viewMode === "kanban" ? T.colors.accentSoft : T.colors.bg,
+                    color: viewMode === "kanban" ? T.colors.accent : T.colors.textSecondary,
+                  }}
+                >
+                  📋 Kanban
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("list")}
+                  style={{
+                    border: "none",
+                    borderRadius: T.radius.md,
+                    padding: "5px 10px",
+                    fontSize: 11,
+                    fontWeight: viewMode === "list" ? 700 : 500,
+                    fontFamily: T.font,
+                    cursor: "pointer",
+                    background: viewMode === "list" ? T.colors.accentSoft : T.colors.bg,
+                    color: viewMode === "list" ? T.colors.accent : T.colors.textSecondary,
+                  }}
+                >
+                  📊 List
+                </button>
+              </div>
             </div>
           </div>
 
@@ -631,6 +669,12 @@ export const DesignPage = memo(function DesignPage({
             <EmptyState
               title="Dizayn TZ topilmadi"
               desc={`${getMonthLabel(activeMonth)} uchun mos TZ hali yo'q.`}
+            />
+          ) : viewMode === "kanban" ? (
+            <DesignTaskKanban
+              tasks={filteredTasks}
+              employeeMap={employeeMap}
+              onTaskClick={openExistingTask}
             />
           ) : (
             groupedProjectData.map((group) => (
