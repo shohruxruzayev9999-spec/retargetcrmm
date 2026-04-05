@@ -11,7 +11,7 @@ import {
   StatusSelect, PriorityBadge, CircleProgress, DataTable, Row, Cell, TeamSelector, CommentThread, ConfirmDialog,
 } from "../components/ui/index.jsx";
 
-const MONTH_SECTIONS = ["Topshiriqlar", "Kontent reja", "Media plan", "Rejalar", "Aloqalar"];
+const MONTH_SECTIONS = ["Topshiriqlar", "Kontent reja"];
 const DAY_ROWS = Array.from({ length: 31 }, (_, index) => index + 1);
 const SHEET_INPUT_STYLE = {
   width: "100%",
@@ -28,9 +28,6 @@ const SHEET_INPUT_STYLE = {
 const WORKSPACE_TAB_META = [
   { id: "tasks", label: "Topshiriqlar" },
   { id: "content", label: "Kontent reja" },
-  { id: "media", label: "Media plan" },
-  { id: "plans", label: "Rejalar" },
-  { id: "calls", label: "Aloqalar" },
 ];
 
 function getMonthList(months) {
@@ -290,13 +287,10 @@ const MonthWorkspaceCards = memo(function MonthWorkspaceCards({
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
           {[
             { label: "Task", value: stats.totalTasks, color: T.colors.accent },
             { label: "Kontent", value: stats.contentCount, color: T.colors.green },
-            { label: "Media", value: stats.mediaCount, color: T.colors.orange },
-            { label: "Rejalar", value: stats.plansCount, color: T.colors.purple },
-            { label: "Aloqalar", value: stats.callsCount, color: T.colors.indigo },
           ].map((item) => (
             <div key={item.label} style={{ background: T.colors.borderLight, borderRadius: T.radius.xl, padding: "16px 10px", display: "flex", flexDirection: "column", justifyContent: "center", minHeight: 110 }}>
               <div style={{ fontSize: 22, fontWeight: 900, color: item.color, textAlign: "center" }}>{item.value}</div>
@@ -1172,9 +1166,6 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
 
       {tab === "tasks" ? <TasksTab profile={profile} project={project} employees={employees} selectedMonthId={selectedMonthId} editable={editable} onUpdateProject={onSaveProject} /> : null}
       {tab === "content" ? <ContentPlanTab profile={profile} project={project} employees={employees} selectedMonthId={selectedMonthId} editable={editable} onUpdateProject={onSaveProject} /> : null}
-      {tab === "media" ? <MediaPlanTab profile={profile} project={project} employees={employees} selectedMonthId={selectedMonthId} editable={editable} onUpdateProject={onSaveProject} /> : null}
-      {tab === "plans" ? <PlansTab profile={profile} project={project} selectedMonthId={selectedMonthId} editable={editable} onUpdateProject={onSaveProject} /> : null}
-      {tab === "calls" ? <CallsTab profile={profile} project={project} employees={employees} selectedMonthId={selectedMonthId} editable={editable} onUpdateProject={onSaveProject} /> : null}
 
       {editingProject ? (
         <ProjectFormModal
@@ -1211,7 +1202,7 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
 
       {workspaceDeleteTarget ? (
         <ConfirmDialog
-          message={`"${workspaceDeleteTarget.label}" workspace butunlay o'chirilsinmi? Shu oynadagi task, kontent, media plan, rejalar va aloqalar ham olib tashlanadi.`}
+          message={`"${workspaceDeleteTarget.label}" workspace butunlay o'chirilsinmi? Shu oynadagi task va kontent ham olib tashlanadi.`}
           onCancel={() => setWorkspaceDeleteTarget(null)}
           onConfirm={() => {
             deleteWorkspaceMonth(workspaceDeleteTarget);
