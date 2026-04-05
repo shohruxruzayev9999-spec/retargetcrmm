@@ -4,11 +4,13 @@ import { toMoney, clamp, isoNow, todayIso, makeId, sortByRecent, indexById, calc
 import { canEdit, canViewReports, canManagePeople, canWorkInProject, canManageProjectMeta, projectMembers, visibleProjects } from "../core/permissions.js";
 import { normalizeComments, createComment, withRecordMeta } from "../core/normalizers.js";
 import { Avatar, Button, Card, PageHeader, Field, Modal, EmptyState, SkeletonBlock, GridSkeleton, StatusBadge, StatusSelect, PriorityBadge, CircleProgress, StatCard, DataTable, Row, Cell, TeamSelector, CommentThread, EmojiPicker } from "../components/ui/index.jsx";
+import { ShootingKanban } from "../components/ShootingKanban.jsx";
 
 export function ShootingPage({ profile, shoots, projects, employees, onSaveShoot, onDeleteShoot }) {
   const sectionEditable = profile.role !== "INVESTOR" && projects.length > 0;
   const projectMap = useMemo(() => indexById(projects), [projects]);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
+  const [viewMode, setViewMode] = useState("kanban");
   const [editingId, setEditingId] = useState("");
   const [draft, setDraft] = useState({
     date: "",
@@ -64,9 +66,36 @@ export function ShootingPage({ profile, shoots, projects, employees, onSaveShoot
     onSaveShoot({ ...shoot, comments: [...normalizeComments(shoot.comments), createComment(text, profile)] });
   }
 
+  function handleAddShootInKanban(projectId) {
+    setDraft(prev => ({ ...prev, projectId }));
+    setEditingId("");
+    // Scroll to form
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   return (
     <div>
-      <PageHeader title="Syomka kalendari" subtitle="Biriktirilgan loyihalar bo'yicha syomka eventlari realtime ishlaydi." />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 20 }}>
+        <div>
+          <PageHeader title="Syomka kalendari" subtitle="Biriktirilgan loyihalar bo'yicha syomka eventlari realtime ishlaydi." />
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button 
+            variant={viewMode === "kanban" ? "primary" : "secondary"}
+            onClick={() => setViewMode("kanban")}
+            style={{ fontSize: 12, padding: "8px 12px" }}
+          >
+            Kanban
+          </Button>
+          <Button 
+            variant={viewMode === "list" ? "primary" : "secondary"}
+            onClick={() => setViewMode("list")}
+            style={{ fontSize: 12, padding: "8px 12px" }}
+          >
+            Ro'yxat
+          </Button>
+        </div>
+      </div>
 
       {sectionEditable ? (
         <Card style={{ background: T.colors.bg, marginBottom: 18 }}>
@@ -88,7 +117,17 @@ export function ShootingPage({ profile, shoots, projects, employees, onSaveShoot
         </Card>
       ) : null}
 
-      {sortedShoots.length ? (
+      {viewMode === "kanban" && projects.length > 0 ? (
+        <ShootingKanban 
+          shoots={sortedShoots}
+          projects={projects}
+          employees={employees}
+          profile={profile}
+          onSaveShoot={onSaveShoot}
+          onDeleteShoot={onDeleteShoot}
+          onAddShoot={handleAddShootInKanban}
+        />
+      ) : viewMode === "list" && sortedShoots.length ? (
         <div style={{ display: "grid", gap: 18 }}>
           {Object.entries(groupedShoots).map(([date, items]) => (
             <Card key={date} style={{ padding: 18 }}>
