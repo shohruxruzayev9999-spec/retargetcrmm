@@ -10,8 +10,8 @@ export function ShootingPage({ profile, shoots, projects, employees, onSaveShoot
   const sectionEditable = profile.role !== "INVESTOR" && projects.length > 0;
   const projectMap = useMemo(() => indexById(projects), [projects]);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
-  const [viewMode, setViewMode] = useState("kanban");
   const [editingId, setEditingId] = useState("");
+  const [showComposer, setShowComposer] = useState(false);
   const [draft, setDraft] = useState({
     date: "",
     time: "",
@@ -29,19 +29,10 @@ export function ShootingPage({ profile, shoots, projects, employees, onSaveShoot
     () => [...shoots].sort((a, b) => `${a.date || ""} ${a.time || ""}`.localeCompare(`${b.date || ""} ${b.time || ""}`)),
     [shoots]
   );
-  const groupedShoots = useMemo(
-    () =>
-      sortedShoots.reduce((acc, shoot) => {
-        const key = shoot.date || "Sana ko'rsatilmagan";
-        if (!acc[key]) acc[key] = [];
-        acc[key].push(shoot);
-        return acc;
-      }, {}),
-    [sortedShoots]
-  );
 
   function reset() {
     setEditingId("");
+    setShowComposer(false);
     setDraft({
       date: "",
       time: "",
@@ -67,39 +58,32 @@ export function ShootingPage({ profile, shoots, projects, employees, onSaveShoot
   }
 
   function handleAddShootInKanban(projectId) {
-    setDraft(prev => ({ ...prev, projectId }));
+    setDraft(prev => ({ ...prev, projectId, status: "Yangi" }));
     setEditingId("");
-    // Scroll to form
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    setShowComposer(true);
   }
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 20 }}>
-        <div>
-          <PageHeader title="Syomka kalendari" subtitle="Biriktirilgan loyihalar bo'yicha syomka eventlari realtime ishlaydi." />
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <Button 
-            variant={viewMode === "kanban" ? "primary" : "secondary"}
-            onClick={() => setViewMode("kanban")}
-            style={{ fontSize: 12, padding: "8px 12px" }}
-          >
-            Kanban
-          </Button>
-          <Button 
-            variant={viewMode === "list" ? "primary" : "secondary"}
-            onClick={() => setViewMode("list")}
-            style={{ fontSize: 12, padding: "8px 12px" }}
-          >
-            Ro'yxat
-          </Button>
-        </div>
-      </div>
+      <PageHeader title="Syomka kalendari" subtitle="Biriktirilgan loyihalar bo'yicha syomka eventlari realtime ishlaydi." />
 
-      {sectionEditable ? (
-        <Card style={{ background: T.colors.bg, marginBottom: 18 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
+      {projects.length > 0 ? (
+        <ShootingKanban 
+          shoots={sortedShoots}
+          projects={projects}
+          employees={employees}
+          profile={profile}
+          onSaveShoot={onSaveShoot}
+          onDeleteShoot={onDeleteShoot}
+          onAddShoot={handleAddShootInKanban}
+        />
+      ) : (
+        <EmptyState title="Syomka yozuvlari yo'q" desc="Syomka kalendari shu yerda yuritiladi." />
+      )}
+
+      {showComposer ? (
+        <Modal title={editingId ? "Syomkani tahrirlash" : "Yangi syomka qo'shish"} onClose={reset} width={760}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
             <Field label="Sana" type="date" value={draft.date} onChange={(value) => setDraft((prev) => ({ ...prev, date: value }))} />
             <Field label="Vaqt" type="time" value={draft.time} onChange={(value) => setDraft((prev) => ({ ...prev, time: value }))} />
             <Field label="Loyiha" value={draft.projectId} onChange={(value) => setDraft((prev) => ({ ...prev, projectId: value }))} options={projects.map((project) => ({ value: project.id, label: project.name }))} />
@@ -110,81 +94,12 @@ export function ShootingPage({ profile, shoots, projects, employees, onSaveShoot
             <Field label="Holat" value={draft.status} onChange={(value) => setDraft((prev) => ({ ...prev, status: value }))} options={SHOOT_STATUSES} />
             <Field label="Qisqa izoh" value={draft.note} onChange={(value) => setDraft((prev) => ({ ...prev, note: value }))} />
           </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
-            {editingId ? <Button variant="secondary" onClick={reset}>Bekor</Button> : null}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+            <Button variant="secondary" onClick={reset}>Bekor</Button>
             <Button onClick={save}>{editingId ? "Syomkani yangilash" : "Syomka qo'shish"}</Button>
           </div>
-        </Card>
+        </Modal>
       ) : null}
-
-      {viewMode === "kanban" && projects.length > 0 ? (
-        <ShootingKanban 
-          shoots={sortedShoots}
-          projects={projects}
-          employees={employees}
-          profile={profile}
-          onSaveShoot={onSaveShoot}
-          onDeleteShoot={onDeleteShoot}
-          onAddShoot={handleAddShootInKanban}
-        />
-      ) : viewMode === "list" && sortedShoots.length ? (
-        <div style={{ display: "grid", gap: 18 }}>
-          {Object.entries(groupedShoots).map(([date, items]) => (
-            <Card key={date} style={{ padding: 18 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 14 }}>
-                <div>
-                  <div style={{ fontSize: 16, fontWeight: 900 }}>{date}</div>
-                  <div style={{ marginTop: 4, color: T.colors.textSecondary, fontSize: 12 }}>{items.length} ta syomka eventi</div>
-                </div>
-                <div style={{ width: 14, height: 14, borderRadius: "50%", background: T.colors.accent }} />
-              </div>
-              <div style={{ display: "grid", gap: 12 }}>
-                {items.map((shoot) => {
-                  const project = projectMap[shoot.projectId];
-                  const operator = employeeMap[shoot.operatorId];
-                  const canMutate = canWorkInProject(profile, project);
-                  return (
-                    <Card key={shoot.id} style={{ background: "#fff", padding: 16 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                            <div style={{ fontWeight: 900 }}>{shoot.type || "Syomka turi"}</div>
-                            <StatusSelect value={shoot.status || "Yangi"} options={SHOOT_STATUSES} onChange={canMutate ? (status) => onSaveShoot({ ...shoot, status }) : null} disabled={!canMutate} />
-                          </div>
-                          <div style={{ marginTop: 6, color: T.colors.textMuted, fontSize: 13 }}>
-                            {project?.name || "Loyiha tanlanmagan"} · {shoot.time || "--:--"} · {shoot.location || "Lokatsiya yo'q"}
-                          </div>
-                          <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.7 }}>
-                            Maqsad: {shoot.goal || "-"}<br />
-                            Izoh: {shoot.note || "-"}
-                          </div>
-                        </div>
-                        <div style={{ display: "grid", gap: 8, justifyItems: "end" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.colors.textMuted }}>
-                            {operator ? <Avatar name={operator.name} url={operator.avatarUrl} size={24} /> : null}
-                            <span style={{ fontSize: 12 }}>{operator?.name || "Mas'ul yo'q"}</span>
-                          </div>
-                          {canMutate ? (
-                            <div style={{ display: "flex", gap: 8 }}>
-                              <Button variant="secondary" onClick={() => { setEditingId(shoot.id); setDraft({ ...shoot, comments: normalizeComments(shoot.comments) }); }} style={{ padding: "7px 10px" }}>Tahrirlash</Button>
-                              <Button variant="danger" onClick={() => onDeleteShoot(shoot.id)} style={{ padding: "7px 10px" }}>O'chirish</Button>
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div style={{ marginTop: 12 }}>
-                        <CommentThread comments={shoot.comments} onAddComment={canMutate ? (text) => addComment(shoot, text) : null} placeholder="Syomka bo'yicha izoh..." />
-                      </div>
-                    </Card>
-                  );
-                })}
-              </div>
-            </Card>
-          ))}
-        </div>
-      ) : (
-        <EmptyState title="Syomka yozuvlari yo'q" desc="Syomka kalendari shu yerda yuritiladi." />
-      )}
     </div>
   );
 }
