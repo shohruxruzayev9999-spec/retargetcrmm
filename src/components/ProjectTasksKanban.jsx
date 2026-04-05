@@ -30,9 +30,7 @@ export function ProjectTasksKanban({
 }) {
   const employeeMap = useMemo(() => Object.fromEntries(employees.map(e => [e.id, e])), [employees]);
   
-  // Determine which statuses to use (video or regular tasks)
-  const hasVideoTasks = tasks.some(t => isVideoTask(t.format));
-  const statusOptions = hasVideoTasks ? MONTAJ_STATUSES : TASK_STATUSES;
+  const statusOptions = Array.from(new Set([...TASK_STATUSES, ...MONTAJ_STATUSES]));
   
   // Group tasks by status
   const tasksByStatus = useMemo(() => {
@@ -51,7 +49,7 @@ export function ProjectTasksKanban({
   }, [tasks, statusOptions]);
 
   return (
-    <div style={{ display: "flex", gap: 16, overflowX: "auto", paddingBottom: 20 }}>
+    <div style={{ display: "flex", gap: 16, overflowX: "auto", paddingBottom: 20, alignItems: "flex-start" }}>
       {statusOptions.map((status) => {
         const columnTasks = tasksByStatus[status] || [];
 
@@ -66,8 +64,6 @@ export function ProjectTasksKanban({
               padding: 16,
               display: "flex",
               flexDirection: "column",
-              maxHeight: "calc(100vh - 300px)",
-              overflow: "hidden",
               transition: "box-shadow 0.2s ease",
             }}
             onMouseEnter={e => e.currentTarget.style.boxShadow = `0 10px 30px rgba(0,113,227,.12)`}
@@ -82,7 +78,7 @@ export function ProjectTasksKanban({
             </div>
 
             {/* Tasks List */}
-            <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {columnTasks.length ? (
                 columnTasks.map((task) => {
                   const owner = employeeMap[task.ownerId];
