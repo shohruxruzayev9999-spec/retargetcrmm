@@ -1,5 +1,5 @@
 import React, { memo, useState, useRef, useEffect } from "react";
-import { T, STATUS_META, PRIORITY_META, EMOJI_GROUPS } from "../../core/constants.js";
+import { T, STATUS_META, PRIORITY_META, PLATFORM_META, EMOJI_GROUPS } from "../../core/constants.js";
 import { initials, fieldValue, sortByRecent, toMoney } from "../../core/utils.js";
 import { normalizeComments, createComment } from "../../core/normalizers.js";
 import { LIMITS } from "../../core/constants.js";
@@ -236,17 +236,193 @@ export function DataTable({ columns, children }) {
   );
 }
 export function Row({ children }) { return <tr>{children}</tr>; }
-export function Cell({ children, style = {} }) { return <td style={{ padding: "11px 14px", borderTop: `1px solid ${T.colors.borderLight}`, fontSize: 13.5, verticalAlign: "top", ...style }}>{children}</td>; }
+export function Cell({ children, style = {} }) { return <td style={{ padding: "11px 14px", borderTop: `1px solid ${T.colors.borderLight}`, fontSize: 13.5, verticalAlign: "middle", ...style }}>{children}</td>; }
+
+const ASSIGNEE_CHIP_PALETTE = [
+  T.colors.accent, T.colors.purple, T.colors.orange, T.colors.green, T.colors.indigo, "#e11d48",
+];
+
+function assigneeChipColors(id) {
+  const h = String(id || "").split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const c = ASSIGNEE_CHIP_PALETTE[h % ASSIGNEE_CHIP_PALETTE.length];
+  return { background: `${c}18`, color: c, border: `1px solid ${c}55` };
+}
+
+/** Bir qator balandlikda: gorizontal scroll + rangli chip; tanlovlar pastga cho'zilmaydi */
+export function CompactMultiSelect({
+  value = [],
+  onChange,
+  options = [],
+  variant = "status",
+  assigneeNames = {},
+  disabled,
+  placeholder = "Tanlang",
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const list = Array.isArray(value) ? [...new Set(value.filter(Boolean))] : [];
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function handleDown(event) {
+      if (rootRef.current && !rootRef.current.contains(event.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleDown);
+    return () => document.removeEventListener("mousedown", handleDown);
+  }, [open]);
+
+  function optionValues() {
+    return options.map((o) => (typeof o === "object" && o !== null ? o.value : o)).filter((x) => x !== "" && x != null);
+  }
+
+  function labelFor(v) {
+    if (variant === "assignee") return assigneeNames[v] || v;
+    const found = options.find((o) => (typeof o === "object" && o !== null ? o.value === v : o === v));
+    if (found && typeof found === "object") return found.label;
+    return found || v;
+  }
+
+  function chipStyle(v) {
+    if (variant === "platform") {
+      const m = PLATFORM_META[v] || { bg: T.colors.borderLight, text: T.colors.text, border: T.colors.border };
+      return { background: m.bg, color: m.text, border: `1px solid ${m.border}` };
+    }
+    if (variant === "assignee") return assigneeChipColors(v);
+    const m = STATUS_META[v] || { bg: T.colors.borderLight, text: T.colors.textSecondary, border: T.colors.border };
+    return { background: m.bg, color: m.text, border: `1px solid ${m.border}` };
+  }
+
+  function toggle(v) {
+    if (!onChange) return;
+    if (list.includes(v)) onChange(list.filter((x) => x !== v));
+    else onChange([...list, v]);
+  }
+
+  const vals = optionValues();
+
+  return (
+    <div ref={rootRef} style={{ position: "relative", width: "100%", minWidth: 0 }}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => !disabled && setOpen((o) => !o)}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          height: 36,
+          maxHeight: 36,
+          padding: "2px 8px",
+          borderRadius: T.radius.md,
+          border: `1px solid ${T.colors.border}`,
+          background: T.colors.surface,
+          cursor: disabled ? "not-allowed" : "pointer",
+          boxSizing: "border-box",
+        }}
+      >
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            overflowX: "auto",
+            overflowY: "hidden",
+            flexWrap: "nowrap",
+            scrollbarWidth: "thin",
+          }}
+        >
+          {list.length === 0 ? (
+            <span style={{ fontSize: 11, color: T.colors.textTertiary, whiteSpace: "nowrap" }}>{placeholder}</span>
+          ) : (
+            <>
+              {list.map((v) => (
+                <span
+                  key={v}
+                  title={labelFor(v)}
+                  style={{
+                    ...chipStyle(v),
+                    fontSize: 10,
+                    fontWeight: 800,
+                    padding: "3px 8px",
+                    borderRadius: T.radius.full,
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                    maxWidth: 120,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {labelFor(v)}
+                </span>
+              ))}
+              <span style={{ fontSize: 10, fontWeight: 700, color: T.colors.textMuted, whiteSpace: "nowrap", flexShrink: 0 }}>
+                {list.length} ta
+              </span>
+            </>
+          )}
+        </div>
+        <span style={{ flexShrink: 0, color: T.colors.textMuted, fontSize: 11, lineHeight: 1 }}>▾</span>
+      </button>
+      {open && !disabled ? (
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: "calc(100% + 4px)",
+            zIndex: 80,
+            maxHeight: 240,
+            overflowY: "auto",
+            background: T.colors.surface,
+            border: `1px solid ${T.colors.border}`,
+            borderRadius: T.radius.md,
+            boxShadow: T.shadow.lg,
+            padding: 6,
+          }}
+        >
+          {vals.map((v) => (
+            <label
+              key={v}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "7px 8px",
+                cursor: "pointer",
+                fontSize: 12,
+                borderRadius: T.radius.sm,
+              }}
+            >
+              <input type="checkbox" checked={list.includes(v)} onChange={() => toggle(v)} />
+              <span style={{ ...chipStyle(v), padding: "3px 10px", borderRadius: T.radius.full, fontSize: 11, fontWeight: 700 }}>
+                {labelFor(v)}
+              </span>
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 // ─── TeamSelector ─────────────────────────────────────────────────────────────
-export function TeamSelector({ employees, value, onChange }) {
+export function TeamSelector({ employees, value, onChange, compact = false }) {
   const v = Array.isArray(value) ? value : [];
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+    <div
+      style={
+        compact
+          ? { display: "flex", flexWrap: "nowrap", gap: 6, overflowX: "auto", paddingBottom: 2, maxWidth: "100%" }
+          : { display: "flex", flexWrap: "wrap", gap: 8 }
+      }
+    >
       {employees.map(emp => {
         const active = v.includes(emp.id);
         return (
-          <button key={emp.id} type="button" onClick={() => onChange(active ? v.filter(i => i !== emp.id) : [...v, emp.id])} style={{ border: `1px solid ${active ? T.colors.accent : T.colors.border}`, background: active ? T.colors.accentSoft : T.colors.bg, color: active ? T.colors.accent : T.colors.textMuted, borderRadius: T.radius.full, padding: "8px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: T.font }}>
+          <button key={emp.id} type="button" onClick={() => onChange(active ? v.filter(i => i !== emp.id) : [...v, emp.id])} style={{ border: `1px solid ${active ? T.colors.accent : T.colors.border}`, background: active ? T.colors.accentSoft : T.colors.bg, color: active ? T.colors.accent : T.colors.textMuted, borderRadius: T.radius.full, padding: "8px 10px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: T.font, flexShrink: 0 }}>
             {emp.name}
           </button>
         );

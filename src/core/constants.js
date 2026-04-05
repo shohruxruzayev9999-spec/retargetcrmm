@@ -103,6 +103,15 @@ export const PRIORITY_META = {
   "Past":   { bg: "#dcfce7", text: "#166534" },
 };
 
+/** Jadval multi-select chip ranglari (platforma ustunlari) */
+export const PLATFORM_META = {
+  Instagram: { bg: "#fce7f3", text: "#9d174d", border: "#f9a8d4" },
+  Facebook:  { bg: "#dbeafe", text: "#1e40af", border: "#93c5fd" },
+  TikTok:    { bg: "#f3e8ff", text: "#6b21a8", border: "#d8b4fe" },
+  YouTube:   { bg: "#fee2e2", text: "#b91c1c", border: "#fca5a5" },
+  Telegram:  { bg: "#e0f2fe", text: "#0369a1", border: "#7dd3fc" },
+};
+
 // ─── App Constants ────────────────────────────────────────────────────────────
 export const ROOT_DOC_ID   = "agency-crm";
 export const SCHEMA_VERSION = 3;

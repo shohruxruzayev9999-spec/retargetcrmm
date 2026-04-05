@@ -5,8 +5,6 @@ export { DashboardPage }     from "./DashboardPage.jsx";
 export { ProjectsPage }      from "./ProjectsPage.jsx";
 export { TeamPage }          from "./TeamPage.jsx";
 export { ShootingPage }      from "./ShootingPage.jsx";
-export { MeetingsPage }      from "./MeetingsPage.jsx";
-export { NotificationsPage } from "./NotificationsPage.jsx";
 export { ReportsPage }       from "./ReportsPage.jsx";
 export { FinancePage }       from "./FinancePage.jsx";
 export { WorkflowPage }      from "./WorkflowPage.jsx";

@@ -20,7 +20,7 @@ import {
   makeId, isoNow, toMoney, clamp, sortByRecent, indexById,
   readCache, writeCache, projectWorkspaceCacheKey,
   flattenPlans, splitPlans, calcProjectProgress, buildProjectCaches,
-  healthScore, unreadNotifications, humanizeAuthError,
+  healthScore, humanizeAuthError,
 } from "./core/utils.js";
 import {
   canEdit, canManagePeople, canWorkInProject,
@@ -53,8 +53,6 @@ import { DashboardPage }     from "./pages/DashboardPage.jsx";
 import { ProjectsPage }      from "./pages/ProjectsPage.jsx";
 import { TeamPage }          from "./pages/TeamPage.jsx";
 import { ShootingPage }      from "./pages/ShootingPage.jsx";
-import { MeetingsPage }      from "./pages/MeetingsPage.jsx";
-import { NotificationsPage } from "./pages/NotificationsPage.jsx";
 import { FinancePage }       from "./pages/FinancePage.jsx";
 import { MontajPage }        from "./pages/MontajPage.jsx";
 import { DesignPage }        from "./pages/DesignPage.jsx";
@@ -66,9 +64,6 @@ const COLS = db ? {
   users:         collection(db, "users"),
   userPrivate:   collection(db, "userPrivate"),
   shoots:        collection(db, "shoots"),
-  meetings:      collection(db, "meetings"),
-  notifications: collection(db, "notifications"),
-  auditLogs:     collection(db, "auditLogs"),
 } : {};
 
 function mergeRecordsById(baseItems = [], incomingItems = []) {
@@ -90,7 +85,7 @@ function containsAllIds(expectedItems = [], actualItems = []) {
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
-function Sidebar({ profile, page, onNavigate, onLogout, unreadCount }) {
+function Sidebar({ profile, page, onNavigate, onLogout }) {
   const items = [
     { id: "dashboard",     label: "Dashboard",        icon: "◈" },
     { id: "projects",      label: "Loyihalar",         icon: "◫" },
@@ -98,8 +93,6 @@ function Sidebar({ profile, page, onNavigate, onLogout, unreadCount }) {
     { id: "shooting",      label: "Syomka",            icon: "◎" },
     { id: "montaj",        label: "Montaj bo'limi",    icon: "✂" },
     { id: "design",        label: "Grafik dizayn",     icon: "◈" },
-    { id: "meetings",      label: "Uchrashuvlar",      icon: "◷" },
-    { id: "notifications", label: "Bildirishnomalar",  icon: "◌", badge: unreadCount },
     ...(canViewFinancialDashboard(profile.role) ? [{ id: "finance", label: "Moliyaviy dashboard", icon: "◍" }] : []),
     { id: "workflow",      label: "Workflow",          icon: "⋯" },
   ];
@@ -112,12 +105,10 @@ function Sidebar({ profile, page, onNavigate, onLogout, unreadCount }) {
       <div style={{ display: "grid", gap: 2, flex: 1 }}>
         {items.map(item => {
           const active = item.id === page;
-          const blink = item.id === "notifications" && Number(item.badge || 0) > 0;
           return (
             <button key={item.id} type="button" onClick={() => onNavigate(item.id)} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", border: "none", borderRadius: T.radius.md, padding: "9px 12px", cursor: "pointer", background: active ? T.colors.accent : "transparent", color: active ? "#fff" : T.colors.textSecondary, fontWeight: 600, fontSize: 13.5, fontFamily: T.font, position: "relative", textAlign: "left" }}>
               <span style={{ fontSize: 15, flexShrink: 0 }}>{item.icon}</span>
               <span>{item.label}</span>
-              {item.badge ? <span style={{ marginLeft: "auto", minWidth: 22, height: 22, borderRadius: T.radius.full, background: active ? "#ffffff" : T.colors.red, color: active ? T.colors.red : "#ffffff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 900, animation: blink ? "sidebarPulse 1.2s infinite" : "none" }}>{item.badge}</span> : null}
             </button>
           );
         })}
@@ -309,9 +300,6 @@ function AppShell() {
   const initPrivate    = cachedCrm.userPrivate && typeof cachedCrm.userPrivate === "object"
     ? Object.fromEntries(Object.entries(cachedCrm.userPrivate).map(([id, i]) => [id, normalizeStoredPrivateUser(id, i)])) : {};
   const initShoots     = Array.isArray(cachedCrm.shoots)        ? cachedCrm.shoots.map(i => normalizeStoredRecord(i.id, i))        : [];
-  const initMeetings   = Array.isArray(cachedCrm.meetings)      ? cachedCrm.meetings.map(i => normalizeStoredRecord(i.id, i))      : [];
-  const initNotifs     = Array.isArray(cachedCrm.notifications) ? cachedCrm.notifications.map(i => normalizeStoredRecord(i.id, i)) : [];
-  const initAudit      = Array.isArray(cachedCrm.auditLog)      ? cachedCrm.auditLog.map(i => normalizeStoredRecord(i.id, i))      : [];
 
   // ── State ────────────────────────────────────────────────────────────────
   const [profile,             setProfile]             = useState(null);
@@ -319,9 +307,6 @@ function AppShell() {
   const [publicUsers,         setPublicUsers]         = useState(initPublicUsers);
   const [privateUsers,        setPrivateUsers]        = useState(initPrivate);
   const [shootDocs,           setShootDocs]           = useState(initShoots);
-  const [meetingDocs,         setMeetingDocs]         = useState(initMeetings);
-  const [notificationDocs,    setNotificationDocs]    = useState(initNotifs);
-  const [auditDocs,           setAuditDocs]           = useState(initAudit);
   const [designTaskDocs,      setDesignTaskDocs]      = useState([]);
   const [selectedProjectWorkspace, setSelectedProjectWorkspace] = useState(EMPTY_PROJECT_WORKSPACE);
   const [page,               setPage]               = useState("dashboard");
@@ -373,7 +358,6 @@ function AppShell() {
 
   const shoots       = useMemo(() => visibleShoots(profile, shootDocs, projectDocs), [profile, shootDocs, projectDocs]);
   const projectCaches= useMemo(() => buildProjectCaches(projects, designTaskDocs), [projects, designTaskDocs]);
-  const unreadCount  = useMemo(() => profile ? unreadNotifications(notificationDocs, profile.uid) : 0, [notificationDocs, profile]);
   const financialDashboard = useMemo(() => buildFinancialDashboard({
     projects,
     employees,
@@ -403,13 +387,8 @@ function AppShell() {
   }, [toasts]);
 
   // ── Optimistic meta docs apply ────────────────────────────────────────────
-  function applyOptimisticMetaDocs(metaDocs) {
-    const notifs  = metaDocs.filter(i => i.collection === "notifications");
-    const audits  = metaDocs.filter(i => i.collection === "auditLogs");
-    startTransition(() => {
-      if (notifs.length)  setNotificationDocs(cur => [...notifs.map(i => normalizeStoredRecord(i.id, i.data)), ...cur].slice(0, 120));
-      if (audits.length)  setAuditDocs(cur => [...audits.map(i => normalizeStoredRecord(i.id, i.data)), ...cur].slice(0, 180));
-    });
+  function applyOptimisticMetaDocs() {
+    /* Bildirishnomalar olib tashlangan — faqat Firestore ga audit yozuvi ketadi */
   }
 
   // ── Auth listener ─────────────────────────────────────────────────────────
@@ -421,8 +400,7 @@ function AppShell() {
         if (!firebaseUser) {
           setProfile(null);
           setProjectDocs([]); setPublicUsers([]); setPrivateUsers({});
-          setShootDocs([]); setMeetingDocs([]); setNotificationDocs([]);
-          setAuditDocs([]);
+          setShootDocs([]);
           setDesignTaskDocs([]);
           setSelectedProjectWorkspace(EMPTY_PROJECT_WORKSPACE);
           setDesignProjectId("");
@@ -569,32 +547,6 @@ function AppShell() {
     }, e => console.error("[CRM] shoots:", e?.code));
   }, [profile?.uid, page]);
 
-  // ── Meetings (page-gated) ─────────────────────────────────────────────────
-  useEffect(() => {
-    if (!profile || !COLS.meetings || page !== "meetings") return;
-    return onSnapshot(COLS.meetings, snap => {
-      startTransition(() => setMeetingDocs(sortByRecent(snap.docs.map(e => normalizeStoredRecord(e.id, e.data())), "date")));
-    }, e => console.error("[CRM] meetings:", e?.code));
-  }, [profile?.uid, page]);
-
-  // ── Notifications (always-on for badge) ───────────────────────────────────
-  useEffect(() => {
-    if (!profile || !COLS.notifications) return;
-    const cached = Array.isArray(initialCacheRef.current.notifications) ? initialCacheRef.current.notifications : [];
-    if (cached.length) startTransition(() => setNotificationDocs(cached.map(i => normalizeStoredRecord(i.id, i))));
-    return onSnapshot(COLS.notifications, snap => {
-      startTransition(() => setNotificationDocs(sortByRecent(snap.docs.map(e => normalizeStoredRecord(e.id, e.data())), "createdAt").slice(0, 120)));
-    }, () => {});
-  }, [profile?.uid]);
-
-  // ── Audit logs (page-gated) ───────────────────────────────────────────────
-  useEffect(() => {
-    if (!profile || !COLS.auditLogs || page !== "notifications") return;
-    return onSnapshot(COLS.auditLogs, snap => {
-      startTransition(() => setAuditDocs(sortByRecent(snap.docs.map(e => normalizeStoredRecord(e.id, e.data())), "createdAt").slice(0, 180)));
-    }, () => {});
-  }, [profile?.uid, page]);
-
   // ── Design tasks (page-gated, all visible projects) ─────────────────────
   useEffect(() => {
     if (!profile || !db || page !== "design") return;
@@ -716,9 +668,9 @@ function AppShell() {
   // ── Cache write debounce ──────────────────────────────────────────────────
   useEffect(() => {
     if (!profile) return;
-    const t = setTimeout(() => writeCache(CRM_CACHE_KEY, { projects: projectDocs, users: publicUsers, userPrivate: privateUsers, shoots: shootDocs, meetings: meetingDocs, notifications: notificationDocs, auditLog: auditDocs }), 400);
+    const t = setTimeout(() => writeCache(CRM_CACHE_KEY, { projects: projectDocs, users: publicUsers, userPrivate: privateUsers, shoots: shootDocs }), 400);
     return () => clearTimeout(t);
-  }, [profile?.uid, projectDocs, publicUsers, privateUsers, shootDocs, meetingDocs, notificationDocs, auditDocs]);
+  }, [profile?.uid, projectDocs, publicUsers, privateUsers, shootDocs]);
 
   useEffect(() => {
     if (!profile || !db || !canViewFinancialDashboard(profile.role)) return undefined;
@@ -739,7 +691,6 @@ function AppShell() {
   const navigate = useCallback((nextPage) => {  // ARCH-03 FIX: useCallback
     setPage(nextPage);
     if (nextPage !== "projects") setSelectedProjectId("");
-    if (nextPage === "notifications") markAllNotificationsRead();
   }, []);
 
   // ─── Helpers shared across actions ────────────────────────────────────────
@@ -749,17 +700,6 @@ function AppShell() {
       : sortByRecent([...projectDocsRef.current.filter(i => i.id !== projectId), normalizeStoredProjectMeta(projectId, projectMetaDoc)], "updatedAt");
     return next.filter(p => !p.archived);
   }
-
-  // ─── Action: Mark all notifications read ──────────────────────────────────
-  const markAllNotificationsRead = useCallback(async () => {  // ARCH-03 FIX
-    if (!profile || !COLS.notifications) return;
-    const unread = notificationDocs.filter(n => !n.readBy?.[profile.uid]).slice(0, 50);
-    if (!unread.length) return;
-    startTransition(() => setNotificationDocs(cur => cur.map(n => unread.some(u => u.id === n.id) ? { ...n, readBy: { ...(n.readBy || {}), [profile.uid]: true } } : n)));
-    try {
-      await commitBatchOperations(unread.map(n => ({ type: "set", ref: doc(db, "notifications", n.id), data: { readBy: { ...(n.readBy || {}), [profile.uid]: true } }, options: { merge: true } })));
-    } catch (e) { setAuthError(humanizeAuthError(e)); }
-  }, [profile, notificationDocs]);
 
   // ─── Auth actions ─────────────────────────────────────────────────────────
   const handleEmailLogin = useCallback(async (email, password) => {
@@ -1055,30 +995,6 @@ function AppShell() {
     }
   }, [profile, designTaskDocs, confirm]);
 
-  // ─── Meeting CRUD ──────────────────────────────────────────────────────────
-  const addMeeting = useCallback(async (item) => {
-    if (!canEdit(profile?.role) || !item.client.trim() || !db) return;
-    const meeting = { ...item, id: makeId("meeting"), createdAt: isoNow(), updatedAt: isoNow(), createdBy: profile.uid, updatedBy: profile.uid };
-    const metaDocs= createMetaDocs({ notifyText: "Meeting yozuvi qo'shildi", auditText: `Meeting saqlandi: ${item.client}`, page: "meetings" }, profile);
-    startTransition(() => { setMeetingDocs(cur => [meeting, ...cur]); applyOptimisticMetaDocs(metaDocs); });
-    setSyncing(true);
-    try { await commitBatchOperations([{ type: "set", ref: doc(db, "meetings", meeting.id), data: meeting, options: { merge: false } }, ...metaDocs.map(e => ({ type: "set", ref: doc(db, e.collection, e.id), data: e.data, options: { merge: false } }))]); pushToast("Meeting yozuvi qo'shildi"); }
-    catch (e) { setAuthError(humanizeAuthError(e)); pushToast(humanizeAuthError(e), "error"); }
-    finally { setSyncing(false); }
-  }, [profile]);
-
-  const deleteMeeting = useCallback(async (id) => {
-    if (!canEdit(profile?.role)) return;
-    const ok = await confirm("Meeting yozuvi o'chirilsinmi?");
-    if (!ok) return;
-    const metaDocs = createMetaDocs({ notifyText: "Meeting yozuvi o'chirildi", auditText: "Meeting yozuvi o'chirildi", page: "meetings" }, profile);
-    startTransition(() => { setMeetingDocs(cur => cur.filter(m => m.id !== id)); applyOptimisticMetaDocs(metaDocs); });
-    setSyncing(true);
-    try { await commitBatchOperations([{ type: "delete", ref: doc(db, "meetings", id) }, ...metaDocs.map(e => ({ type: "set", ref: doc(db, e.collection, e.id), data: e.data, options: { merge: false } }))]); pushToast("Meeting yozuvi o'chirildi"); }
-    catch (e) { setAuthError(humanizeAuthError(e)); pushToast(humanizeAuthError(e), "error"); }
-    finally { setSyncing(false); }
-  }, [profile, confirm]);
-
   // ─── Render guard ──────────────────────────────────────────────────────────
   if (!hasFirebaseConfig) return <SetupScreen />;
   if (booting) return <LoadingScreen label="CRM yuklanmoqda..." />;
@@ -1089,7 +1005,7 @@ function AppShell() {
       <GlobalStyles />
       {confirmDialog}
       <div style={{ display: "flex", minHeight: "100vh", background: T.colors.bg, color: T.colors.text, fontFamily: T.font }}>
-        <Sidebar profile={profile} page={page} onNavigate={navigate} onLogout={handleLogout} unreadCount={unreadCount} />
+        <Sidebar profile={profile} page={page} onNavigate={navigate} onLogout={handleLogout} />
         <main style={{ flex: 1, overflow: "auto", padding: "32px 36px", maxWidth: "calc(100% - 220px)" }}>
           {authError && !authError.includes("ruxsat") && !authError.includes("permission") ? (
             <div style={{ marginBottom: 14, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", padding: "12px 14px", borderRadius: T.radius.lg, fontSize: 13, fontWeight: 600 }}>{authError}</div>
@@ -1115,8 +1031,6 @@ function AppShell() {
               onDeleteDesignTask={deleteDesignTask}
             />
           )}
-          {page === "meetings"      && <MeetingsPage profile={profile} meetings={meetingDocs} employees={employees} onAddMeeting={addMeeting} onDeleteMeeting={deleteMeeting} />}
-          {page === "notifications" && <NotificationsPage notifications={notificationDocs} profile={profile} onMarkAllRead={markAllNotificationsRead} />}
           {page === "finance" && canViewFinancialDashboard(profile.role) && <FinancePage projects={projects} employees={employees} />}
           {page === "workflow"      && <WorkflowPage />}
         </main>

@@ -42,20 +42,6 @@ export function syncCollectionOperations(baseCollection, previousItems, nextItem
 // ─── Meta Doc Creators ────────────────────────────────────────────────────────
 export function createMetaDocs(meta, actor) {
   const docs = [];
-  if (meta?.notifyText) {
-    docs.push({
-      collection: "notifications",
-      id: makeId("notification"),
-      data: {
-        text:      meta.notifyText,
-        page:      meta.page || "dashboard",
-        actorId:   actor?.uid || "",
-        actorName: actor?.name || actor?.email || "Tizim",
-        createdAt: isoNow(),
-        readBy:    actor?.uid ? { [actor.uid]: true } : {},
-      },
-    });
-  }
   if (!meta?.skipAudit) {
     docs.push({
       collection: "auditLogs",

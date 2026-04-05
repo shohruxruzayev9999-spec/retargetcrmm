@@ -250,6 +250,7 @@ const DesignerSingleSelect = memo(function DesignerSingleSelect({
     <div style={{ display: "grid", gap: 6 }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: T.colors.textSecondary }}>Dizayner</div>
       <TeamSelector
+        compact
         employees={employees}
         value={value ? [value] : []}
         onChange={(next) => onChange(next[next.length - 1] || "")}

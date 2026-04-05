@@ -21,8 +21,8 @@ export function initials(name = "?") {
 export function pageLabel(page) {
   return {
     dashboard: "Dashboard", projects: "Loyihalar", team: "Xodimlar",
-    shooting: "Syomka", design: "Grafik dizayn", meetings: "Uchrashuvlar",
-    workflow: "Workflow", notifications: "Bildirishnomalar",
+    shooting: "Syomka", montaj: "Montaj bo'limi", design: "Grafik dizayn",
+    workflow: "Workflow", finance: "Moliyaviy dashboard",
   }[page] || "CRM";
 }
 
@@ -275,10 +275,6 @@ export function healthScore(projects) {
   const ap = allTasks.filter(t => t.status === "Tasdiqlandi").length;
   const ov = allTasks.filter(t => t.deadline && t.deadline < todayIso() && t.status !== "Bajarildi" && t.status !== "Tasdiqlandi").length;
   return Math.round(clamp((c / allTasks.length) * 62 + (ap / allTasks.length) * 18 + (a / allTasks.length) * 10 - ov * 4 + 20, 0, 100));
-}
-
-export function unreadNotifications(notifications, uid) {
-  return notifications.filter(n => !n.readBy?.[uid]).length;
 }
 
 export function humanizeAuthError(error) {

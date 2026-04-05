@@ -9,6 +9,7 @@ import { normalizeComments, createComment, withRecordMeta } from "../core/normal
 import {
   Avatar, Button, Card, Field, Modal, EmptyState, StatusBadge,
   StatusSelect, PriorityBadge, CircleProgress, DataTable, Row, Cell, TeamSelector, CommentThread, ConfirmDialog,
+  CompactMultiSelect,
 } from "../components/ui/index.jsx";
 import { ProjectTasksKanban } from "../components/ProjectTasksKanban.jsx";
 
@@ -87,26 +88,48 @@ function monthScopedCount(items, monthId) {
   return (items || []).filter((item) => recordMatchesMonth(item, monthId)).length;
 }
 
+function normalizeMultiIds(primary, legacy) {
+  if (Array.isArray(primary) && primary.length) return [...new Set(primary.filter(Boolean))];
+  if (legacy) return [legacy];
+  return [];
+}
+
 function hasContentRowValue(row, defaultOwnerId) {
+  const owners = normalizeMultiIds(row.ownerIds, row.ownerId);
+  const platforms = normalizeMultiIds(row.platforms, row.platform);
+  const statuses = normalizeMultiIds(row.statuses, row.status);
+  const ownerSorted = owners.slice().sort().join(",");
+  const defSorted = (defaultOwnerId ? [defaultOwnerId] : []).slice().sort().join(",");
   return Boolean(
     row.topic.trim() ||
     row.caption.trim() ||
     row.note.trim() ||
-    (row.ownerId || "") !== (defaultOwnerId || "") ||
-    row.status !== "Rejalashtirildi" ||
-    row.platform !== "Instagram" ||
+    ownerSorted !== defSorted ||
+    owners.length > 1 ||
+    (statuses[0] || "") !== "Rejalashtirildi" ||
+    statuses.length > 1 ||
+    (platforms[0] || "") !== "Instagram" ||
+    platforms.length > 1 ||
     row.format !== "Post"
   );
 }
 
 function hasMediaRowValue(row, defaultOwnerId) {
+  const owners = normalizeMultiIds(row.ownerIds, row.ownerId);
+  const platforms = normalizeMultiIds(row.platforms, row.platform);
+  const statuses = normalizeMultiIds(row.statuses, row.status);
+  const ownerSorted = owners.slice().sort().join(",");
+  const defSorted = (defaultOwnerId ? [defaultOwnerId] : []).slice().sort().join(",");
   return Boolean(
     Number(row.budget || 0) > 0 ||
     row.note.trim() ||
-    (row.ownerId || "") !== (defaultOwnerId || "") ||
-    row.status !== "Rejalashtirildi" ||
+    ownerSorted !== defSorted ||
+    owners.length > 1 ||
+    (statuses[0] || "") !== "Rejalashtirildi" ||
+    statuses.length > 1 ||
     row.type !== "Post" ||
-    row.platform !== "Instagram" ||
+    (platforms[0] || "") !== "Instagram" ||
+    platforms.length > 1 ||
     row.format !== "Post"
   );
 }
@@ -163,101 +186,6 @@ function SelectCellInput({ value, onChange, disabled, options, style = {} }) {
           : <option key={option} value={option}>{option}</option>
       ))}
     </select>
-  );
-}
-
-function MultiSelectCellInput({ value = [], onChange, disabled, options, style = {}, placeholder = "Tanlang..." }) {
-  const selectedValues = Array.isArray(value) ? value : (value ? [value] : []);
-  
-  const handleChange = (event) => {
-    const selectedValue = event.target.value;
-    let newValues;
-    
-    if (selectedValues.includes(selectedValue)) {
-      newValues = selectedValues.filter(v => v !== selectedValue);
-    } else {
-      newValues = [...selectedValues, selectedValue];
-    }
-    
-    onChange(newValues.length === 0 ? [] : newValues);
-  };
-
-  const displayText = selectedValues.length === 0 
-    ? placeholder 
-    : selectedValues.length === 1 
-      ? options.find(opt => (typeof opt === "object" ? opt.value : opt) === selectedValues[0])?.label || selectedValues[0]
-      : `${selectedValues.length} ta tanlangan`;
-
-  return (
-    <div style={{ position: "relative" }}>
-      <select 
-        value="" 
-        onChange={handleChange} 
-        disabled={disabled} 
-        style={{ ...SHEET_INPUT_STYLE, ...style }}
-      >
-        <option value="" disabled>{displayText}</option>
-        {options.map((option) => {
-          const optionValue = typeof option === "object" ? option.value : option;
-          const optionLabel = typeof option === "object" ? option.label : option;
-          const isSelected = selectedValues.includes(optionValue);
-          
-          return (
-            <option key={optionValue} value={optionValue}>
-              {isSelected ? "✓ " : ""}{optionLabel}
-            </option>
-          );
-        })}
-      </select>
-      {selectedValues.length > 0 && (
-        <div style={{ 
-          position: "absolute", 
-          top: "100%", 
-          left: 0, 
-          right: 0, 
-          background: "#fff", 
-          border: `1px solid ${T.colors.border}`, 
-          borderTop: "none", 
-          borderRadius: `0 0 ${T.radius.md} ${T.radius.md}`, 
-          maxHeight: "120px", 
-          overflowY: "auto", 
-          zIndex: 1000,
-          fontSize: 11
-        }}>
-          {selectedValues.map(val => {
-            const label = options.find(opt => (typeof opt === "object" ? opt.value : opt) === val)?.label || val;
-            return (
-              <div key={val} style={{ 
-                padding: "4px 8px", 
-                borderBottom: `1px solid ${T.colors.border}`, 
-                display: "flex", 
-                justifyContent: "space-between",
-                alignItems: "center"
-              }}>
-                <span>{label}</span>
-                <button 
-                  onClick={(e) => {
-                    e.preventDefault();
-                    const newValues = selectedValues.filter(v => v !== val);
-                    onChange(newValues.length === 0 ? [] : newValues);
-                  }}
-                  style={{ 
-                    background: "none", 
-                    border: "none", 
-                    color: T.colors.red, 
-                    cursor: "pointer", 
-                    fontSize: 12,
-                    padding: "0 4px"
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -700,20 +628,30 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
   const contentItems = project.contentPlan || [];
   const [rows, setRows] = useState([]);
   const [scenarioDay, setScenarioDay] = useState(null);
+  const assigneeNames = useMemo(
+    () => Object.fromEntries(assignableEmployees.map((e) => [e.id, e.name])),
+    [assignableEmployees]
+  );
 
   useEffect(() => {
     const scoped = contentItems.filter((item) => recordMatchesMonth(item, selectedMonthId));
     setRows(DAY_ROWS.map((day) => {
       const existing = scoped.find((item) => getRecordDay(item) === day) || null;
+      const ownerIds = normalizeMultiIds(existing?.ownerIds, existing?.ownerId);
+      const platforms = normalizeMultiIds(existing?.platforms, existing?.platform);
+      const statuses = normalizeMultiIds(existing?.statuses, existing?.status);
       return {
         day,
         existing,
         platform: existing?.platform || "Instagram",
+        platforms: platforms.length ? platforms : ["Instagram"],
         format: existing?.format || "Post",
         topic: existing?.topic || "",
         caption: existing?.caption || "",
         ownerId: existing?.ownerId || defaultOwnerId,
+        ownerIds: ownerIds.length ? ownerIds : (defaultOwnerId ? [defaultOwnerId] : []),
         status: existing?.status || "Rejalashtirildi",
+        statuses: statuses.length ? statuses : ["Rejalashtirildi"],
         note: existing?.note || "",
       };
     }));
@@ -734,12 +672,15 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
         id: row.existing?.id || makeId("content"),
         date: buildMonthDate(selectedMonthId, row.day),
         monthId: selectedMonthId,
-        platform: row.platform,
+        platform: row.platforms?.[0] || row.platform || "Instagram",
+        platforms: row.platforms?.length ? row.platforms : ["Instagram"],
         format: row.format,
         topic: row.topic.trim(),
         caption: row.caption.trim(),
-        ownerId: row.ownerId || defaultOwnerId,
-        status: row.status,
+        ownerId: row.ownerIds?.[0] || row.ownerId || defaultOwnerId,
+        ownerIds: row.ownerIds?.length ? row.ownerIds : [defaultOwnerId].filter(Boolean),
+        status: row.statuses?.[0] || row.status || "Rejalashtirildi",
+        statuses: row.statuses?.length ? row.statuses : ["Rejalashtirildi"],
         note: row.note.trim(),
         comments: normalizeComments(row.existing?.comments),
       }, profile));
@@ -787,10 +728,38 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
                 </div>
               </div>
             </Cell>
-            <Cell style={{ minWidth: 180 }}><MultiSelectCellInput value={row.ownerId} onChange={(value) => updateRow(row.day, "ownerId", value)} disabled={!sectionEditable} options={[{ value: "", label: "Tanlanmagan" }, ...assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]} style={{ minWidth: 165 }} placeholder="Mas'ul tanlang..." /></Cell>
-            <Cell style={{ minWidth: 170 }}><MultiSelectCellInput value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={CONTENT_STATUSES} style={{ minWidth: 150 }} placeholder="Holat tanlang..." /></Cell>
+            <Cell style={{ minWidth: 200 }}>
+              <CompactMultiSelect
+                variant="assignee"
+                value={row.ownerIds}
+                onChange={(next) => updateRow(row.day, "ownerIds", next)}
+                options={assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))}
+                assigneeNames={assigneeNames}
+                disabled={!sectionEditable}
+                placeholder="Mas'ul"
+              />
+            </Cell>
+            <Cell style={{ minWidth: 188 }}>
+              <CompactMultiSelect
+                variant="status"
+                value={row.statuses}
+                onChange={(next) => updateRow(row.day, "statuses", next)}
+                options={CONTENT_STATUSES}
+                disabled={!sectionEditable}
+                placeholder="Holat"
+              />
+            </Cell>
             <Cell style={{ minWidth: 150 }}><TextCellInput value={row.note} onChange={(value) => updateRow(row.day, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
-            <Cell style={{ minWidth: 165 }}><MultiSelectCellInput value={row.platform} onChange={(value) => updateRow(row.day, "platform", value)} disabled={!sectionEditable} options={PLATFORMS} style={{ minWidth: 150 }} placeholder="Platforma tanlang..." /></Cell>
+            <Cell style={{ minWidth: 172 }}>
+              <CompactMultiSelect
+                variant="platform"
+                value={row.platforms}
+                onChange={(next) => updateRow(row.day, "platforms", next)}
+                options={PLATFORMS}
+                disabled={!sectionEditable}
+                placeholder="Platforma"
+              />
+            </Cell>
           </Row>
         ))}
       </DataTable>
@@ -820,20 +789,30 @@ function MonthlyMediaSheet({ profile, project, employees, selectedMonthId, onUpd
   const defaultOwnerId = assignableEmployees[0]?.id || "";
   const mediaItems = project.mediaPlan || [];
   const [rows, setRows] = useState([]);
+  const assigneeNames = useMemo(
+    () => Object.fromEntries(assignableEmployees.map((e) => [e.id, e.name])),
+    [assignableEmployees]
+  );
 
   useEffect(() => {
     const scoped = mediaItems.filter((item) => recordMatchesMonth(item, selectedMonthId));
     setRows(DAY_ROWS.map((day) => {
       const existing = scoped.find((item) => getRecordDay(item) === day) || null;
+      const ownerIds = normalizeMultiIds(existing?.ownerIds, existing?.ownerId);
+      const platforms = normalizeMultiIds(existing?.platforms, existing?.platform);
+      const statuses = normalizeMultiIds(existing?.statuses, existing?.status);
       return {
         day,
         existing,
         type: existing?.type || "Post",
         platform: existing?.platform || "Instagram",
+        platforms: platforms.length ? platforms : ["Instagram"],
         format: existing?.format || "Post",
         ownerId: existing?.ownerId || defaultOwnerId,
+        ownerIds: ownerIds.length ? ownerIds : (defaultOwnerId ? [defaultOwnerId] : []),
         budget: existing?.budget ? String(existing.budget) : "",
         status: existing?.status || "Rejalashtirildi",
+        statuses: statuses.length ? statuses : ["Rejalashtirildi"],
         note: existing?.note || "",
       };
     }));
@@ -853,11 +832,14 @@ function MonthlyMediaSheet({ profile, project, employees, selectedMonthId, onUpd
         date: buildMonthDate(selectedMonthId, row.day),
         monthId: selectedMonthId,
         type: row.type,
-        platform: row.platform,
+        platform: row.platforms?.[0] || row.platform || "Instagram",
+        platforms: row.platforms?.length ? row.platforms : ["Instagram"],
         format: row.format,
-        ownerId: row.ownerId || defaultOwnerId,
+        ownerId: row.ownerIds?.[0] || row.ownerId || defaultOwnerId,
+        ownerIds: row.ownerIds?.length ? row.ownerIds : [defaultOwnerId].filter(Boolean),
         budget: Number(row.budget || 0),
-        status: row.status,
+        status: row.statuses?.[0] || row.status || "Rejalashtirildi",
+        statuses: row.statuses?.length ? row.statuses : ["Rejalashtirildi"],
         note: row.note.trim(),
         comments: normalizeComments(row.existing?.comments),
       }, profile));
@@ -878,11 +860,39 @@ function MonthlyMediaSheet({ profile, project, employees, selectedMonthId, onUpd
           <Row key={row.day}>
             <Cell style={{ fontWeight: 800 }}>{String(row.day).padStart(2, "0")}</Cell>
             <Cell style={{ minWidth: 160 }}><SelectCellInput value={row.type} onChange={(value) => updateRow(row.day, "type", value)} disabled={!sectionEditable} options={FORMATS} style={{ minWidth: 145 }} /></Cell>
-            <Cell style={{ minWidth: 165 }}><SelectCellInput value={row.platform} onChange={(value) => updateRow(row.day, "platform", value)} disabled={!sectionEditable} options={PLATFORMS} style={{ minWidth: 150 }} /></Cell>
+            <Cell style={{ minWidth: 172 }}>
+              <CompactMultiSelect
+                variant="platform"
+                value={row.platforms}
+                onChange={(next) => updateRow(row.day, "platforms", next)}
+                options={PLATFORMS}
+                disabled={!sectionEditable}
+                placeholder="Platforma"
+              />
+            </Cell>
             <Cell style={{ minWidth: 165 }}><SelectCellInput value={row.format} onChange={(value) => updateRow(row.day, "format", value)} disabled={!sectionEditable} options={FORMATS} style={{ minWidth: 150 }} /></Cell>
-            <Cell style={{ minWidth: 180 }}><SelectCellInput value={row.ownerId} onChange={(value) => updateRow(row.day, "ownerId", value)} disabled={!sectionEditable} options={[{ value: "", label: "Tanlanmagan" }, ...assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]} style={{ minWidth: 165 }} /></Cell>
+            <Cell style={{ minWidth: 200 }}>
+              <CompactMultiSelect
+                variant="assignee"
+                value={row.ownerIds}
+                onChange={(next) => updateRow(row.day, "ownerIds", next)}
+                options={assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))}
+                assigneeNames={assigneeNames}
+                disabled={!sectionEditable}
+                placeholder="Mas'ul"
+              />
+            </Cell>
             <Cell style={{ minWidth: 140 }}><NumberCellInput value={row.budget} onChange={(value) => updateRow(row.day, "budget", value)} disabled={!sectionEditable} placeholder="0" /></Cell>
-            <Cell style={{ minWidth: 170 }}><StatusCellSelect value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={PLAN_STATUSES} style={{ minWidth: 150 }} /></Cell>
+            <Cell style={{ minWidth: 188 }}>
+              <CompactMultiSelect
+                variant="status"
+                value={row.statuses}
+                onChange={(next) => updateRow(row.day, "statuses", next)}
+                options={PLAN_STATUSES}
+                disabled={!sectionEditable}
+                placeholder="Holat"
+              />
+            </Cell>
             <Cell style={{ minWidth: 150 }}><TextCellInput value={row.note} onChange={(value) => updateRow(row.day, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
           </Row>
         ))}
