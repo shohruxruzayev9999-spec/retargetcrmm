@@ -444,11 +444,23 @@ function AppShell() {
           : employeeToPublicDoc({ id: firebaseUser.uid, email: firebaseUser.email || "", name: baseName, avatarUrl: firebaseUser.photoURL || "", roleCode, role: registration?.title || fixedRole?.title || ROLE_META[roleCode]?.title || "Xodim", dept: registration?.dept || fixedRole?.dept || "SMM bo'limi", status: "active", assignedProjectIds: [], createdAt: isoNow(), updatedAt: isoNow() });
 
         const nextUserDoc = { ...currentUser, uid: firebaseUser.uid, email: firebaseUser.email || currentUser.email || "", name: currentUser.name || baseName, avatarUrl: firebaseUser.photoURL || currentUser.avatarUrl || "", roleCode, role: currentUser.role || registration?.title || fixedRole?.title || ROLE_META[roleCode]?.title || "Xodim", title: currentUser.title || registration?.title || fixedRole?.title || ROLE_META[roleCode]?.title || "Xodim", dept: currentUser.dept || registration?.dept || fixedRole?.dept || "SMM bo'limi", status: currentUser.status || "active", createdAt: currentUser.createdAt || isoNow(), updatedAt: isoNow() };
-        await setDoc(userRef, nextUserDoc, { merge: true });
-
-        const privateSnap = canManagePeople(roleCode) ? await getDoc(privateRef) : null;
+        
+        // Set profile immediately (don't wait for private doc or setDoc sync)
         pendingRegistrationRef.current = null;
-        setProfile({ uid: firebaseUser.uid, email: nextUserDoc.email, name: nextUserDoc.name, avatarUrl: nextUserDoc.avatarUrl || "", role: roleCode, dept: nextUserDoc.dept, title: nextUserDoc.title, salary: Number(privateSnap?.data()?.salary || 0), kpiBase: Number(privateSnap?.data()?.kpiBase || 80), load: Number(privateSnap?.data()?.load || 0), createdAt: nextUserDoc.createdAt });
+        setProfile({ uid: firebaseUser.uid, email: nextUserDoc.email, name: nextUserDoc.name, avatarUrl: nextUserDoc.avatarUrl || "", role: roleCode, dept: nextUserDoc.dept, title: nextUserDoc.title, salary: 0, kpiBase: 80, load: 0, createdAt: nextUserDoc.createdAt });
+        
+        // Sync user doc and fetch private doc in background
+        setDoc(userRef, nextUserDoc, { merge: true }).catch(e => console.error("[CRM] setDoc user:", e?.code));
+        if (canManagePeople(roleCode)) {
+          getDoc(privateRef)
+            .then(privateSnap => {
+              if (privateSnap.exists()) {
+                const data = privateSnap.data();
+                setProfile(p => p ? { ...p, salary: Number(data?.salary || 0), kpiBase: Number(data?.kpiBase || 80), load: Number(data?.load || 0) } : p);
+              }
+            })
+            .catch(e => console.error("[CRM] getDoc private:", e?.code));
+        }
         setAuthError("");
       } catch (error) { setAuthError(humanizeAuthError(error)); }
       finally { setBooting(false); }
