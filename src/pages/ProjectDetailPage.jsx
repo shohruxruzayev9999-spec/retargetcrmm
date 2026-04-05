@@ -10,6 +10,7 @@ import {
   Avatar, Button, Card, Field, Modal, EmptyState, StatusBadge,
   StatusSelect, PriorityBadge, CircleProgress, DataTable, Row, Cell, TeamSelector, CommentThread, ConfirmDialog,
 } from "../components/ui/index.jsx";
+import { ProjectTasksKanban } from "../components/ProjectTasksKanban.jsx";
 
 const MONTH_SECTIONS = ["Topshiriqlar", "Kontent reja"];
 const DAY_ROWS = Array.from({ length: 31 }, (_, index) => index + 1);
@@ -317,6 +318,7 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
   const employeeMap = useMemo(() => indexById(employees), [employees]);
   const monthsExist = Array.isArray(project.months) && project.months.length > 0;
   const [showLegacyTasks, setShowLegacyTasks] = useState(false);
+  const [viewMode, setViewMode] = useState("kanban");
   const [draft, setDraft] = useState({
     name: "",
     ownerId: assignableEmployees[0]?.id || "",
@@ -427,6 +429,12 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
     onUpdateProject({ ...project, tasks: project.tasks.filter((task) => task.id !== taskId) }, { notifyText: "Task o'chirildi", auditText: "Task o'chirildi", page: "projects", workspaceOnly: true });
   }
 
+  function handleAddTaskInKanban(status) {
+    resetForm();
+    setDraft(prev => ({ ...prev, status }));
+    setShowComposer(true);
+  }
+
   function renderTaskRows(tasks) {
     return tasks.map((task) => {
       const owner = employeeMap[task.ownerId];
@@ -495,7 +503,27 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
           <div style={{ fontSize: 18, fontWeight: 900 }}>Topshiriqlar</div>
           <div style={{ marginTop: 4, fontSize: 12, color: T.colors.textSecondary }}>{getMonthLabel(selectedMonthId)} workspace</div>
         </div>
-        {sectionEditable ? <Button onClick={() => { resetForm(); setShowComposer(true); }}>+ Task qo'shish</Button> : null}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {sectionEditable && (
+            <div style={{ display: "flex", gap: 4 }}>
+              <Button 
+                variant={viewMode === "kanban" ? "primary" : "secondary"}
+                onClick={() => setViewMode("kanban")}
+                style={{ fontSize: 11, padding: "6px 12px" }}
+              >
+                Kanban
+              </Button>
+              <Button 
+                variant={viewMode === "list" ? "primary" : "secondary"}
+                onClick={() => setViewMode("list")}
+                style={{ fontSize: 11, padding: "6px 12px" }}
+              >
+                Ro'yxat
+              </Button>
+            </div>
+          )}
+          {sectionEditable ? <Button onClick={() => { resetForm(); setShowComposer(true); }}>+ Task qo'shish</Button> : null}
+        </div>
       </div>
 
       {sectionEditable && showComposer ? (
@@ -529,7 +557,18 @@ export const TasksTab = memo(function TasksTab({ profile, project, employees, se
         </Card>
       ) : null}
 
-      {filteredTasks.length ? (
+      {viewMode === "kanban" && filteredTasks.length ? (
+        <ProjectTasksKanban
+          tasks={filteredTasks}
+          employees={employees}
+          profile={profile}
+          onUpdateStatus={updateTaskStatus}
+          onDeleteTask={deleteTask}
+          onEditTask={openForEdit}
+          onAddTask={handleAddTaskInKanban}
+          sectionEditable={sectionEditable}
+        />
+      ) : viewMode === "list" && filteredTasks.length ? (
         <DataTable columns={["Task", "Mas'ul", "Boshlanish", "Deadline", "Holat", "Izoh", "Komment", "Amal"]}>
           {renderTaskRows(filteredTasks)}
         </DataTable>
