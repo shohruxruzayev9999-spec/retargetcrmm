@@ -12,7 +12,7 @@ const KANBAN_COLUMNS = [
 
 const CLOSED_STATUSES = new Set(["Yakunlandi", "Rad etildi"]);
 
-export function DesignTaskKanban({ tasks, employeeMap, onTaskClick }) {
+export function DesignTaskKanban({ tasks, employeeMap, onTaskClick, onAddTask }) {
   const groupedByStatus = useMemo(() => {
     const groups = {};
     KANBAN_COLUMNS.forEach((col) => {
@@ -209,9 +209,37 @@ export function DesignTaskKanban({ tasks, employeeMap, onTaskClick }) {
                 })
               )}
             </div>
+
+            {/* Add Task Button */}
+            <button
+              onClick={() => onAddTask?.(column.status)}
+              style={{
+                border: `1px dashed ${T.colors.border}`,
+                background: "transparent",
+                color: T.colors.textSecondary,
+                borderRadius: "0 0 16px 16px",
+                padding: "12px 16px",
+                cursor: "pointer",
+                fontFamily: T.font,
+                fontSize: 13,
+                fontWeight: 600,
+                transition: "all 0.2s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = T.colors.bg;
+                e.currentTarget.style.color = T.colors.text;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.color = T.colors.textSecondary;
+              }}
+            >
+              + Vazifa qo'shish
+            </button>
           </div>
         );
       })}
     </div>
   );
 }
+

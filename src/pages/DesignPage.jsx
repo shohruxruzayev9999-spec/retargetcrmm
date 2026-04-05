@@ -675,6 +675,26 @@ export const DesignPage = memo(function DesignPage({
               tasks={filteredTasks}
               employeeMap={employeeMap}
               onTaskClick={openExistingTask}
+              onAddTask={(status) => {
+                setEditingTask({
+                  id: "",
+                  projectId: projects[0]?.id || "",
+                  title: "",
+                  brief: "",
+                  format: DESIGN_FORMATS[0] || "Banner",
+                  platform: PLATFORMS[0] || "Instagram",
+                  priority: PRIORITIES[1] || "O'rta",
+                  deadline: "",
+                  referenceLinks: [],
+                  smmManagerId: profile?.uid || "",
+                  designerId: "",
+                  status: status,
+                  comments: [],
+                  archived: false,
+                  monthId: activeMonth,
+                });
+                setModalOpen(true);
+              }}
             />
           ) : (
             groupedProjectData.map((group) => (
