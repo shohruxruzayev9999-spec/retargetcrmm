@@ -204,23 +204,18 @@ function LoadingScreen({ label = "Yuklanmoqda..." }) {
 
   useEffect(() => {
     let frame;
-    let timeout;
 
     function tick() {
       setProgress((current) => {
-        if (current >= 100) {
-          timeout = window.setTimeout(() => setProgress(0), 260);
-          return 100;
-        }
+        if (current >= 100) return 100;
         return current + 1;
       });
-      frame = window.setTimeout(tick, 28);
+      frame = window.setTimeout(tick, 8);
     }
 
     tick();
     return () => {
       window.clearTimeout(frame);
-      window.clearTimeout(timeout);
     };
   }, []);
 
@@ -691,14 +686,14 @@ function AppShell() {
     return () => unsubs.forEach(u => u());
   }, [profile?.uid, selectedProjectId]);
 
-  // ── Boot settled safety net (PERF-05 FIX: 3s instead of 2s) ─────────────
+  // ── Boot settled safety net (PERF-05 FIX: reduced from 3s to 1.2s) ─────────────
   useEffect(() => {
     if (!profile) return;
     const t = setTimeout(() => {
       setProjectsReady(true); setPublicUsersReady(true);
       setPrivateUsersReady(true);
       setProjectWorkspaceReady(true); setBootSettled(true);
-    }, 3000);
+    }, 1200);
     return () => clearTimeout(t);
   }, [profile?.uid]);
 
