@@ -166,6 +166,101 @@ function SelectCellInput({ value, onChange, disabled, options, style = {} }) {
   );
 }
 
+function MultiSelectCellInput({ value = [], onChange, disabled, options, style = {}, placeholder = "Tanlang..." }) {
+  const selectedValues = Array.isArray(value) ? value : (value ? [value] : []);
+  
+  const handleChange = (event) => {
+    const selectedValue = event.target.value;
+    let newValues;
+    
+    if (selectedValues.includes(selectedValue)) {
+      newValues = selectedValues.filter(v => v !== selectedValue);
+    } else {
+      newValues = [...selectedValues, selectedValue];
+    }
+    
+    onChange(newValues.length === 0 ? [] : newValues);
+  };
+
+  const displayText = selectedValues.length === 0 
+    ? placeholder 
+    : selectedValues.length === 1 
+      ? options.find(opt => (typeof opt === "object" ? opt.value : opt) === selectedValues[0])?.label || selectedValues[0]
+      : `${selectedValues.length} ta tanlangan`;
+
+  return (
+    <div style={{ position: "relative" }}>
+      <select 
+        value="" 
+        onChange={handleChange} 
+        disabled={disabled} 
+        style={{ ...SHEET_INPUT_STYLE, ...style }}
+      >
+        <option value="" disabled>{displayText}</option>
+        {options.map((option) => {
+          const optionValue = typeof option === "object" ? option.value : option;
+          const optionLabel = typeof option === "object" ? option.label : option;
+          const isSelected = selectedValues.includes(optionValue);
+          
+          return (
+            <option key={optionValue} value={optionValue}>
+              {isSelected ? "✓ " : ""}{optionLabel}
+            </option>
+          );
+        })}
+      </select>
+      {selectedValues.length > 0 && (
+        <div style={{ 
+          position: "absolute", 
+          top: "100%", 
+          left: 0, 
+          right: 0, 
+          background: "#fff", 
+          border: `1px solid ${T.colors.border}`, 
+          borderTop: "none", 
+          borderRadius: `0 0 ${T.radius.md} ${T.radius.md}`, 
+          maxHeight: "120px", 
+          overflowY: "auto", 
+          zIndex: 1000,
+          fontSize: 11
+        }}>
+          {selectedValues.map(val => {
+            const label = options.find(opt => (typeof opt === "object" ? opt.value : opt) === val)?.label || val;
+            return (
+              <div key={val} style={{ 
+                padding: "4px 8px", 
+                borderBottom: `1px solid ${T.colors.border}`, 
+                display: "flex", 
+                justifyContent: "space-between",
+                alignItems: "center"
+              }}>
+                <span>{label}</span>
+                <button 
+                  onClick={(e) => {
+                    e.preventDefault();
+                    const newValues = selectedValues.filter(v => v !== val);
+                    onChange(newValues.length === 0 ? [] : newValues);
+                  }}
+                  style={{ 
+                    background: "none", 
+                    border: "none", 
+                    color: T.colors.red, 
+                    cursor: "pointer", 
+                    fontSize: 12,
+                    padding: "0 4px"
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatusCellSelect({ value, onChange, disabled, options, style = {} }) {
   const meta = STATUS_META[value] || STATUS_META["Rejalashtirildi"];
   return (
@@ -660,11 +755,10 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
         </div>
         {sectionEditable ? <Button onClick={saveRows}>Jadvalni saqlash</Button> : null}
       </div>
-      <DataTable columns={["Kun", "Platforma", "Format", "Mavzu", "Ssenariy", "Mas'ul", "Holat", "Izoh"]}>
+      <DataTable columns={["Kun", "Format", "Mavzu", "Ssenariy", "Mas'ul", "Holat", "Izoh", "Platforma"]}>
         {rows.map((row) => (
           <Row key={row.day}>
             <Cell style={{ fontWeight: 800 }}>{String(row.day).padStart(2, "0")}</Cell>
-            <Cell style={{ minWidth: 165 }}><SelectCellInput value={row.platform} onChange={(value) => updateRow(row.day, "platform", value)} disabled={!sectionEditable} options={PLATFORMS} style={{ minWidth: 150 }} /></Cell>
             <Cell style={{ minWidth: 165 }}><SelectCellInput value={row.format} onChange={(value) => updateRow(row.day, "format", value)} disabled={!sectionEditable} options={FORMATS} style={{ minWidth: 150 }} /></Cell>
             <Cell style={{ minWidth: 190 }}><TextCellInput value={row.topic} onChange={(value) => updateRow(row.day, "topic", value)} disabled={!sectionEditable} placeholder="Mavzu" /></Cell>
             <Cell style={{ minWidth: 360 }}>
@@ -693,9 +787,10 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
                 </div>
               </div>
             </Cell>
-            <Cell style={{ minWidth: 180 }}><SelectCellInput value={row.ownerId} onChange={(value) => updateRow(row.day, "ownerId", value)} disabled={!sectionEditable} options={[{ value: "", label: "Tanlanmagan" }, ...assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]} style={{ minWidth: 165 }} /></Cell>
-            <Cell style={{ minWidth: 170 }}><StatusCellSelect value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={CONTENT_STATUSES} style={{ minWidth: 150 }} /></Cell>
+            <Cell style={{ minWidth: 180 }}><MultiSelectCellInput value={row.ownerId} onChange={(value) => updateRow(row.day, "ownerId", value)} disabled={!sectionEditable} options={[{ value: "", label: "Tanlanmagan" }, ...assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]} style={{ minWidth: 165 }} placeholder="Mas'ul tanlang..." /></Cell>
+            <Cell style={{ minWidth: 170 }}><MultiSelectCellInput value={row.status} onChange={(value) => updateRow(row.day, "status", value)} disabled={!sectionEditable} options={CONTENT_STATUSES} style={{ minWidth: 150 }} placeholder="Holat tanlang..." /></Cell>
             <Cell style={{ minWidth: 150 }}><TextCellInput value={row.note} onChange={(value) => updateRow(row.day, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
+            <Cell style={{ minWidth: 165 }}><MultiSelectCellInput value={row.platform} onChange={(value) => updateRow(row.day, "platform", value)} disabled={!sectionEditable} options={PLATFORMS} style={{ minWidth: 150 }} placeholder="Platforma tanlang..." /></Cell>
           </Row>
         ))}
       </DataTable>
