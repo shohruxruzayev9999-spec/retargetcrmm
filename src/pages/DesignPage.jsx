@@ -585,7 +585,7 @@ export const DesignPage = memo(function DesignPage({
               {projectFilter ? projectMap[projectFilter]?.name || "Barcha TZlar" : "Barcha TZlar"}
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-              {filterButtons.map((item) => (
+              {viewMode === "list" && filterButtons.map((item) => (
                 <button
                   key={item.label}
                   type="button"
@@ -644,7 +644,7 @@ export const DesignPage = memo(function DesignPage({
             </div>
           </div>
 
-          {projectFilter ? (
+          {viewMode === "list" && projectFilter ? (
             <div style={{ marginBottom: 10 }}>
               <button
                 type="button"
