@@ -55,6 +55,62 @@ VITE_FIREBASE_MESSAGING_SENDER_ID = 123456789
 VITE_FIREBASE_APP_ID              = 1:123...
 ```
 
+## 2.1 Task email xabarlari (RETARGET)
+
+Yangi task qo'shilganda va deadline yaqinlashganda email ketishi uchun Firebase Functions deploy qilinadi.
+
+### 1. Functions dependencies o'rnatish
+
+```bash
+cd functions
+npm install
+cd ..
+```
+
+### 2. SMTP secretlarni kiriting
+
+Quyidagi secretlar kerak bo'ladi:
+
+```bash
+firebase functions:secrets:set SMTP_HOST
+firebase functions:secrets:set SMTP_PORT
+firebase functions:secrets:set SMTP_USER
+firebase functions:secrets:set SMTP_PASS
+firebase functions:secrets:set MAIL_FROM
+```
+
+Misol:
+
+- `SMTP_HOST` → `smtp.gmail.com` yoki sizning pochta provayderingiz
+- `SMTP_PORT` → `587`
+- `SMTP_USER` → RETARGET email login
+- `SMTP_PASS` → app password yoki SMTP password
+- `MAIL_FROM` → `RETARGET <noreply@retarget.uz>`
+
+### 3. CRM URL parametrini kiriting
+
+`functions/index.js` ichida `APP_URL` default qiymati bor:
+
+```txt
+https://retargetcrmm.vercel.app
+```
+
+Agar custom domain ishlatsangiz, `functions/.env` ichiga quyidagini yozib deploy qiling:
+
+```bash
+APP_URL=https://sizning-domainingiz.uz
+```
+
+### 4. Functions deploy
+
+```bash
+firebase deploy --only functions
+```
+
+Deploy bo'lgach:
+- yangi task yaratilsa → biriktirilgan xodimga email boradi
+- har kuni soat 08:00 da → deadline yaqinlashgan tasklar uchun reminder email boradi
+
 ---
 
 ## 3. Tuzatilgan kamchiliklar (v3)
