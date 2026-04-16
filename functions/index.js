@@ -13,11 +13,19 @@ setGlobalOptions({ region: "europe-west3", maxInstances: 10 });
 
 const db = admin.firestore();
 
-const SMTP_HOST = defineSecret("SMTP_HOST");
-const SMTP_PORT = defineSecret("SMTP_PORT");
-const SMTP_USER = defineSecret("SMTP_USER");
+const SMTP_HOST = defineString("SMTP_HOST", {
+  default: "smtp.gmail.com",
+});
+const SMTP_PORT = defineString("SMTP_PORT", {
+  default: "465",
+});
+const SMTP_USER = defineString("SMTP_USER", {
+  default: "shohruxruzayev9999@gmail.com",
+});
 const SMTP_PASS = defineSecret("SMTP_PASS");
-const MAIL_FROM = defineSecret("MAIL_FROM");
+const MAIL_FROM = defineString("MAIL_FROM", {
+  default: "RETARGET <shohruxruzayev9999@gmail.com>",
+});
 const APP_URL = defineString("APP_URL", {
   default: "https://retargetcrmm.vercel.app",
 });
@@ -89,7 +97,7 @@ async function getProjectAndUser(projectId, userId) {
 export const sendNewTaskAssignedEmail = onDocumentCreated(
   {
     document: "projects/{projectId}/tasks/{taskId}",
-    secrets: [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM],
+    secrets: [SMTP_PASS],
   },
   async (event) => {
     const task = event.data?.data();
@@ -142,7 +150,7 @@ export const sendUpcomingDeadlineReminders = onSchedule(
   {
     schedule: "0 8 * * *",
     timeZone: "Asia/Tashkent",
-    secrets: [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM],
+    secrets: [SMTP_PASS],
   },
   async () => {
     const today = tztoday();

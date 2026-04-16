@@ -67,25 +67,22 @@ npm install
 cd ..
 ```
 
-### 2. SMTP secretlarni kiriting
+### 2. Gmail app password kiriting
 
-Quyidagi secretlar kerak bo'ladi:
+Hozirgi sozlamada yuboruvchi email default qilib qo'yilgan:
+
+- `SMTP_USER` → `shohruxruzayev9999@gmail.com`
+- `MAIL_FROM` → `RETARGET <shohruxruzayev9999@gmail.com>`
+- `SMTP_HOST` → `smtp.gmail.com`
+- `SMTP_PORT` → `465`
+
+Shu sabab sizdan faqat bitta secret kerak bo'ladi:
 
 ```bash
-firebase functions:secrets:set SMTP_HOST
-firebase functions:secrets:set SMTP_PORT
-firebase functions:secrets:set SMTP_USER
 firebase functions:secrets:set SMTP_PASS
-firebase functions:secrets:set MAIL_FROM
 ```
 
-Misol:
-
-- `SMTP_HOST` → `smtp.gmail.com` yoki sizning pochta provayderingiz
-- `SMTP_PORT` → `587`
-- `SMTP_USER` → RETARGET email login
-- `SMTP_PASS` → app password yoki SMTP password
-- `MAIL_FROM` → `RETARGET <noreply@retarget.uz>`
+Bu yerga Gmail uchun yaratilgan **16 belgili App Password** kiritiladi.
 
 ### 3. CRM URL parametrini kiriting
 
