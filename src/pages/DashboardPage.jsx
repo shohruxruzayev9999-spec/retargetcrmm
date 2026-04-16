@@ -71,7 +71,7 @@ export const DashboardPage = memo(function DashboardPage({ profile, projects, em
       const hasWorkSignals = row.metrics.active > 0 || row.metrics.overdue > 0 || row.metrics.projects > 0;
       const load = hasWorkSignals ? Math.round(clamp(activeScore + overdueScore + projectScore, 0, 100)) : 0;
       return { ...row, load };
-    });
+    }).sort((left, right) => right.load - left.load || right.metrics.active - left.metrics.active);
   }, [employees, employeeMetricsById]);
 
   return (
@@ -155,10 +155,13 @@ export const DashboardPage = memo(function DashboardPage({ profile, projects, em
               </Card>
 
               <Card>
-                <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 12 }}>Jamoa yuklamasi</div>
+                <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 4 }}>Jamoa yuklamasi</div>
+                <div style={{ color: T.colors.textMuted, fontSize: 12, marginBottom: 12 }}>
+                  Faol tasklar asosiy vazn bilan, kechikkan tasklar bosim sifatida, loyiha soni esa yengil ta'sir bilan hisoblanadi.
+                </div>
                 {employees.length ? (
                   <div style={{ display: "grid", gap: 10 }}>
-                    {teamLoadRows.map(({ employee, load }) => {
+                    {teamLoadRows.map(({ employee, metrics, load }) => {
                       return (
                         <div key={employee.id}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
@@ -167,6 +170,9 @@ export const DashboardPage = memo(function DashboardPage({ profile, projects, em
                           </div>
                           <div style={{ height: 8, borderRadius: T.radius.full, background: T.colors.borderLight, overflow: "hidden" }}>
                             <div style={{ width: `${load}%`, height: "100%", background: load > 75 ? T.colors.orange : T.colors.blue }} />
+                          </div>
+                          <div style={{ marginTop: 5, fontSize: 11, color: T.colors.textMuted }}>
+                            Faol: {metrics.active} · Kechikkan: {metrics.overdue} · Loyihalar: {metrics.projects}
                           </div>
                         </div>
                       );
