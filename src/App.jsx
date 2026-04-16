@@ -308,6 +308,7 @@ function AppShell() {
   const [privateUsers,        setPrivateUsers]        = useState(initPrivate);
   const [shootDocs,           setShootDocs]           = useState(initShoots);
   const [designTaskDocs,      setDesignTaskDocs]      = useState([]);
+  const [liveTaskMetricsByProjectId, setLiveTaskMetricsByProjectId] = useState({});
   const [selectedProjectWorkspace, setSelectedProjectWorkspace] = useState(EMPTY_PROJECT_WORKSPACE);
   const [page,               setPage]               = useState("dashboard");
   const [selectedProjectId,  setSelectedProjectId]  = useState("");
@@ -358,6 +359,27 @@ function AppShell() {
 
   const shoots       = useMemo(() => visibleShoots(profile, shootDocs, projectDocs), [profile, shootDocs, projectDocs]);
   const projectCaches= useMemo(() => buildProjectCaches(projects, designTaskDocs), [projects, designTaskDocs]);
+  const projectProgressByProjectId = useMemo(() => {
+    const next = { ...projectCaches.progressByProjectId };
+    Object.entries(liveTaskMetricsByProjectId).forEach(([projectId, metrics]) => {
+      next[projectId] = Number(metrics?.progress || 0);
+    });
+    return next;
+  }, [projectCaches.progressByProjectId, liveTaskMetricsByProjectId]);
+  const dashboardSummary = useMemo(() => {
+    const liveMetricKeys = Object.keys(liveTaskMetricsByProjectId);
+    if (!liveMetricKeys.length) return projectCaches.dashboardSummary;
+    const metricsByProjectId = {};
+    projects.forEach((project) => {
+      metricsByProjectId[project.id] = liveTaskMetricsByProjectId[project.id] || project.metrics || {};
+    });
+    return {
+      totalTasks: projects.reduce((sum, project) => sum + Number(metricsByProjectId[project.id]?.totalTasks || 0), 0),
+      completedTasks: projects.reduce((sum, project) => sum + Number(metricsByProjectId[project.id]?.completedTasks || 0), 0),
+      activeProjects: projectCaches.dashboardSummary.activeProjects,
+      pendingReviews: projectCaches.dashboardSummary.pendingReviews,
+    };
+  }, [projects, projectCaches.dashboardSummary, liveTaskMetricsByProjectId]);
   const financialDashboard = useMemo(() => buildFinancialDashboard({
     projects,
     employees,
@@ -546,6 +568,33 @@ function AppShell() {
       startTransition(() => setShootDocs(snap.docs.map(e => normalizeStoredRecord(e.id, e.data()))));
     }, e => console.error("[CRM] shoots:", e?.code));
   }, [profile?.uid, page]);
+
+  // ── Live project task metrics for dashboard/projects ─────────────────────
+  useEffect(() => {
+    if (!profile || !db || !["dashboard", "projects"].includes(page)) return;
+    if (!projects.length) {
+      setLiveTaskMetricsByProjectId({});
+      return;
+    }
+    const unsubs = [];
+    const metricsByProjectId = {};
+    projects.forEach((project) => {
+      const colRef = collection(db, "projects", project.id, "tasks");
+      const unsub = onSnapshot(colRef, (snap) => {
+        metricsByProjectId[project.id] = computeProjectMetrics({
+          tasks: snap.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data())),
+          contentPlan: [],
+        });
+        startTransition(() => {
+          setLiveTaskMetricsByProjectId({ ...metricsByProjectId });
+        });
+      }, (error) => {
+        console.error("[CRM] project tasks:", error?.code);
+      });
+      unsubs.push(unsub);
+    });
+    return () => unsubs.forEach((unsub) => unsub());
+  }, [profile?.uid, page, projects.length]);
 
   // ── Design tasks (page-gated, all visible projects) ─────────────────────
   useEffect(() => {
@@ -1024,8 +1073,8 @@ function AppShell() {
             </div>
           ) : null}
 
-          {page === "dashboard"     && <DashboardPage profile={profile} projects={projects} employees={employees} employeeMetricsById={projectCaches.employeeMetricsById} progressByProjectId={projectCaches.progressByProjectId} dashboardSummary={projectCaches.dashboardSummary} loading={primaryLoading} onOpenProject={id => { setSelectedProjectId(id); setPage("projects"); }} />}
-          {page === "projects"      && <ProjectsPage profile={profile} projects={projects} employees={employees} selectedProjectId={selectedProjectId} selectedProject={selectedProject} projectReady={projectWorkspaceReady} onSelectProject={setSelectedProjectId} onBackToList={() => setSelectedProjectId("")} onCreateProject={createProject} onSaveProject={saveProject} onDeleteProject={deleteProject} loading={primaryLoading} progressByProjectId={projectCaches.progressByProjectId} designProgressByProjectId={projectCaches.designProgressByProjectId} designTaskCountByProjectId={projectCaches.designTaskCountByProjectId} />}
+          {page === "dashboard"     && <DashboardPage profile={profile} projects={projects} employees={employees} employeeMetricsById={projectCaches.employeeMetricsById} progressByProjectId={projectProgressByProjectId} dashboardSummary={dashboardSummary} loading={primaryLoading} onOpenProject={id => { setSelectedProjectId(id); setPage("projects"); }} />}
+          {page === "projects"      && <ProjectsPage profile={profile} projects={projects} employees={employees} selectedProjectId={selectedProjectId} selectedProject={selectedProject} projectReady={projectWorkspaceReady} onSelectProject={setSelectedProjectId} onBackToList={() => setSelectedProjectId("")} onCreateProject={createProject} onSaveProject={saveProject} onDeleteProject={deleteProject} loading={primaryLoading} progressByProjectId={projectProgressByProjectId} designProgressByProjectId={projectCaches.designProgressByProjectId} designTaskCountByProjectId={projectCaches.designTaskCountByProjectId} taskMetricsByProjectId={liveTaskMetricsByProjectId} />}
           {page === "team"          && <TeamPage profile={profile} employees={employees} projects={projects} employeeMetricsById={projectCaches.employeeMetricsById} assignmentsByEmployeeId={projectCaches.assignmentsByEmployeeId} onSaveEmployee={saveEmployee} onCreateEmployee={createEmployee} onDeleteEmployee={deleteEmployee} loading={teamLoading} />}
           {page === "shooting"      && <ShootingPage profile={profile} shoots={shoots} projects={projects} employees={employees} onSaveShoot={saveShoot} onDeleteShoot={deleteShoot} />}
           {page === "montaj"        && <MontajPage profile={profile} projects={projects} employees={employees} employeeMetricsById={projectCaches.employeeMetricsById} onSaveVideoTask={saveProject} />}

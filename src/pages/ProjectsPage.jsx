@@ -6,7 +6,7 @@ import { normalizeComments, createComment, withRecordMeta } from "../core/normal
 import { Avatar, Button, Card, PageHeader, Field, Modal, EmptyState, SkeletonBlock, GridSkeleton, StatusBadge, StatusSelect, PriorityBadge, CircleProgress, StatCard, DataTable, Row, Cell, TeamSelector, CommentThread, EmojiPicker } from "../components/ui/index.jsx";
 import { ProjectDetailPage, ProjectFormModal } from "./ProjectDetailPage.jsx";
 
-export const ProjectsPage = memo(function ProjectsPage({ profile, projects, employees, selectedProjectId, selectedProject, projectReady, onSelectProject, onBackToList, onCreateProject, onSaveProject, onDeleteProject, loading, progressByProjectId, designProgressByProjectId = {}, designTaskCountByProjectId = {} }) {
+export const ProjectsPage = memo(function ProjectsPage({ profile, projects, employees, selectedProjectId, selectedProject, projectReady, onSelectProject, onBackToList, onCreateProject, onSaveProject, onDeleteProject, loading, progressByProjectId, designProgressByProjectId = {}, designTaskCountByProjectId = {}, taskMetricsByProjectId = {} }) {
   const [showCreate, setShowCreate] = useState(false);
   const editable = canEdit(profile.role);
   const canViewProjectMoney = canViewProjectFinance(profile.role);
@@ -54,6 +54,7 @@ export const ProjectsPage = memo(function ProjectsPage({ profile, projects, empl
           {projects.map((project) => {
             const manager = employeeMap[project.managerId];
             const progress = progressByProjectId[project.id] ?? calcProjectProgress(project);
+            const taskMetrics = taskMetricsByProjectId[project.id] || project.metrics || {};
             const designTaskCount = designTaskCountByProjectId[project.id] || 0;
             const designProgress = designProgressByProjectId[project.id] || 0;
             const progressColor = progress >= 75 ? T.colors.green : progress >= 40 ? T.colors.accent : T.colors.orange;
@@ -71,7 +72,9 @@ export const ProjectsPage = memo(function ProjectsPage({ profile, projects, empl
                     <CircleProgress pct={progress} size={72} stroke={7} color={progressColor} />
                     <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
                       <span style={{ fontSize: 15, fontWeight: 800, color: progressColor }}>{progress}%</span>
-                      <span style={{ fontSize: 10, color: T.colors.textTertiary }}>{project.tasks.filter((task) => task.status === "Bajarildi").length}/{project.tasks.length}</span>
+                      <span style={{ fontSize: 10, color: T.colors.textTertiary }}>
+                        {Number(taskMetrics.completedTasks || 0)}/{Number(taskMetrics.totalTasks || 0)}
+                      </span>
                     </div>
                   </div>
                   <div style={{ flex: 1 }}>
