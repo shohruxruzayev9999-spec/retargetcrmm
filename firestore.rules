@@ -47,6 +47,15 @@ service cloud.firestore {
       );
     }
 
+    function canWorkOnProjectData(projectData, projectId) {
+      return signedIn() && projectData != null && (
+        isManagerRole() ||
+        projectData.managerId == uid() ||
+        (projectData.teamIds != null && uid() in projectData.teamIds) ||
+        (currentUserData() != null && currentUserData().assignedProjectIds != null && projectId in currentUserData().assignedProjectIds)
+      );
+    }
+
     function parentProjectData(projectId) {
       return get(/databases/$(database)/documents/projects/$(projectId)).data;
     }
@@ -92,7 +101,13 @@ service cloud.firestore {
       allow list:           if signedIn();
       allow get:            if canAccessProject(resource.data);
       allow create:         if isManagerRole();
-      allow update:         if isManagerRole() || resource.data.managerId == uid();
+      allow update:         if isManagerRole()
+                              || resource.data.managerId == uid()
+                              || (
+                                canWorkOnProjectData(resource.data, projectId) &&
+                                request.resource.data.diff(resource.data).affectedKeys()
+                                  .hasOnly(["metrics", "memberStats", "updatedAt", "updatedBy"])
+                              );
       allow delete:         if isManagerRole();
 
       match /tasks/{taskId} {

@@ -504,8 +504,8 @@ export const DesignPage = memo(function DesignPage({
   }, []);
 
   const canChangeInlineStatus = useCallback((task) => (
-    canApproveDesignTask(profile?.role) || task?.designerId === profile?.uid
-  ), [profile?.role, profile?.uid]);
+    canEditDesignTask(profile, task)
+  ), [profile]);
 
   const handleInlineStatus = useCallback(async (task, nextStatus) => {
     if (!task || !nextStatus || nextStatus === task.status) return;
@@ -917,7 +917,7 @@ const DesignTaskModal = memo(function DesignTaskModal({
   const canEditForm = isNew ? canCreateDesignTask(profile?.role) : canEditDesignTask(profile, task);
   const canApprove = canApproveDesignTask(profile?.role);
   const canDelete = Boolean(task.id && (canApprove || task.smmManagerId === profile?.uid));
-  const canChangeStatus = canApprove || form.designerId === profile?.uid;
+  const canChangeStatus = canEditDesignTask(profile, form);
 
   const projectOptions = useMemo(
     () => projects.map((project) => ({ value: project.id, label: project.name })),

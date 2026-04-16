@@ -1,14 +1,14 @@
-import React, { memo, useEffect, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import {
-  T, VIDEO_FORMATS, MONTAJ_STATUSES, getCurrentMonthId, getMonthLabel,
+  T, VIDEO_FORMATS, MONTAJ_STATUSES, STATUS_META, getCurrentMonthId, getMonthLabel,
 } from "../core/constants.js";
 import { db } from "../core/firebase.js";
 import { canApproveVideo, canEdit, canEditOwnVideoTask, canWorkInProject } from "../core/permissions.js";
 import { normalizeStoredRecord } from "../core/normalizers.js";
 import { isoNow } from "../core/utils.js";
 import {
-  Avatar, Button, Card, DataTable, EmptyState, Field, PageHeader, Row, Cell, StatusBadge, StatusSelect,
+  Avatar, Button, Card, EmptyState, Field, PageHeader, StatusBadge, StatusSelect,
 } from "../components/ui/index.jsx";
 
 function monthMatches(task, monthId) {
@@ -102,6 +102,160 @@ function InlineSelect({ value, options, onChange, disabled }) {
   );
 }
 
+const DRAG_MIME = "application/x-montaj-task";
+
+function canAssignTaskToEditor(profile, profileRoleCode, task, taskProject, targetMontajorId) {
+  if (!taskProject || !canWorkInProject(profile, taskProject)) return false;
+  if ((task.montajorId || "") === (targetMontajorId || "")) return false;
+  if (canEdit(profile.role)) return true;
+  return profileRoleCode === "EDITOR" && !task.montajorId && targetMontajorId === profile.uid;
+}
+
+function MontajTaskCard({
+  task,
+  index,
+  projectsWithTasks,
+  profile,
+  profileRoleCode,
+  employeeMap,
+  editorEmployees,
+  dragging,
+  setDragging,
+  onStatusChange,
+  onClaim,
+}) {
+  const taskProject = task.project || projectsWithTasks.find((p) => p.id === task.projectId);
+  const canWork = canWorkInProject(profile, taskProject);
+  const canAssignEditor = canEdit(profile.role) && canWork;
+  const canClaimTask = profileRoleCode === "EDITOR" && !task.montajorId && canWork;
+  const canMutateOwnTask = canEditOwnVideoTask(profile, task) && canWork && ["Montajda", "Qayta ishlash"].includes(task.status);
+  const statusOptions = canEdit(profile.role)
+    ? MONTAJ_STATUSES
+    : canMutateOwnTask
+      ? [task.status, "Ko'rib chiqilmoqda"]
+      : MONTAJ_STATUSES;
+  const assignedEditor = employeeMap[task.montajorId];
+  const showApproveActions = canApproveVideo(profile.role) && task.status === "Ko'rib chiqilmoqda" && canWork;
+  const meta = STATUS_META[task.status] || STATUS_META["Kutilmoqda"];
+
+  const onDragStart = (e) => {
+    if (!canWork) return;
+    e.dataTransfer.setData(DRAG_MIME, JSON.stringify({ taskId: task.id, projectId: task.projectId, fromStatus: task.status }));
+    e.dataTransfer.effectAllowed = "move";
+    setDragging(task.id);
+  };
+
+  const onDragEnd = () => setDragging(null);
+
+  return (
+    <div
+      draggable={canWork}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      style={{
+        background: T.colors.surface,
+        border: `1px solid ${dragging === task.id ? T.colors.accent : T.colors.border}`,
+        borderRadius: T.radius.lg,
+        padding: "12px 12px 10px",
+        boxShadow: dragging === task.id ? T.shadow.md : T.shadow.sm,
+        cursor: canWork ? "grab" : "default",
+        opacity: dragging && dragging !== task.id ? 0.92 : 1,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 10, fontWeight: 800, color: T.colors.textTertiary }}>#{index + 1}</span>
+        <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: T.radius.full, background: meta.bg, color: meta.text, border: `1px solid ${meta.border}` }}>
+          {task.status}
+        </span>
+      </div>
+      <div style={{ fontWeight: 800, fontSize: 14, lineHeight: 1.35, marginBottom: 6 }}>{task.name || "Nomsiz video"}</div>
+      <div style={{ fontSize: 12, color: T.colors.textSecondary, marginBottom: 8 }}>{task.projectName}</div>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span style={{ background: T.colors.accentSoft, color: T.colors.accent, padding: "3px 8px", borderRadius: T.radius.full, fontSize: 11, fontWeight: 800 }}>
+          {task.format}
+        </span>
+        <span style={{ fontSize: 12, color: T.colors.textMuted }}>📅 {task.deadline || "—"}</span>
+        {task.revisionCount ? (
+          <span style={{ fontSize: 11, color: T.colors.red, fontWeight: 700 }}>Qayta: {task.revisionCount}</span>
+        ) : null}
+      </div>
+      <div style={{ marginBottom: 10 }}>
+        {canAssignEditor ? (
+          <InlineSelect
+            value={task.montajorId || ""}
+            onChange={(montajorId) => onStatusChange(task, { montajorId })}
+            options={[
+              { value: "", label: "Biriktirilmagan" },
+              ...editorEmployees.map((employee) => ({ value: employee.id, label: employee.name })),
+            ]}
+          />
+        ) : assignedEditor ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Avatar name={assignedEditor.name} url={assignedEditor.avatarUrl} size={26} />
+            <span style={{ fontSize: 13 }}>{assignedEditor.name}</span>
+          </div>
+        ) : (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: T.colors.orangeSoft, color: "#b45309", padding: "5px 9px", borderRadius: T.radius.full, fontSize: 11, fontWeight: 800 }}>
+            Biriktirilmagan
+          </span>
+        )}
+      </div>
+      <div style={{ marginBottom: 8 }} onMouseDown={(e) => e.stopPropagation()}>
+        <StatusSelect
+          value={task.status || "Kutilmoqda"}
+          options={statusOptions}
+          disabled={!(canEdit(profile.role) || canMutateOwnTask)}
+          onChange={(status) => {
+            if (canEdit(profile.role) && canWork) {
+              onStatusChange(task, { status });
+              return;
+            }
+            if (canMutateOwnTask && status === "Ko'rib chiqilmoqda") {
+              onStatusChange(task, { status: "Ko'rib chiqilmoqda" });
+            }
+          }}
+        />
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {canClaimTask ? (
+          <Button
+            variant="warning"
+            style={{ padding: "6px 10px", fontSize: 12 }}
+            onClick={() => onClaim(task)}
+          >
+            Olish
+          </Button>
+        ) : null}
+        {showApproveActions ? (
+          <>
+            <Button
+              variant="success"
+              style={{ padding: "6px 10px", fontSize: 12 }}
+              onClick={() => onStatusChange(task, {
+                status: "Bajarildi",
+                finishedAt: isoNow(),
+                approvedBy: profile.uid,
+              })}
+            >
+              Bajarildi
+            </Button>
+            <Button
+              variant="danger"
+              style={{ padding: "6px 10px", fontSize: 12 }}
+              onClick={() => onStatusChange(task, {
+                status: "Qayta ishlash",
+                revisionCount: (task.revisionCount || 0) + 1,
+              })}
+            >
+              Qayta ishlash
+            </Button>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export const MontajPage = memo(function MontajPage({
   profile,
   projects,
@@ -112,7 +266,8 @@ export const MontajPage = memo(function MontajPage({
   const [projectTasksById, setProjectTasksById] = useState({});
   const [selectedMonthId, setSelectedMonthId] = useState(getCurrentMonthId());
   const [selectedStatus, setSelectedStatus] = useState("all");
-  const [selectedEditorId, setSelectedEditorId] = useState("all");
+  const [dragging, setDragging] = useState(null);
+  const [dragOverColumn, setDragOverColumn] = useState(null);
 
   useEffect(() => {
     if (!db || !projects.length) {
@@ -138,6 +293,14 @@ export const MontajPage = memo(function MontajPage({
   useEffect(() => {
     if (!monthIds.includes(selectedMonthId)) setSelectedMonthId(getCurrentMonthId());
   }, [monthIds, selectedMonthId]);
+
+  useEffect(() => {
+    function clearCol() {
+      setDragOverColumn(null);
+    }
+    document.addEventListener("dragend", clearCol);
+    return () => document.removeEventListener("dragend", clearCol);
+  }, []);
 
   const editorEmployees = useMemo(
     () => employees.filter((employee) => employee.roleCode === "EDITOR" || employee.dept === "Media bo'limi"),
@@ -176,15 +339,28 @@ export const MontajPage = memo(function MontajPage({
     [allVideoTasks, selectedMonthId]
   );
 
-  const filteredTasks = useMemo(
+  const boardTasks = useMemo(
     () =>
       monthScopedTasks.filter((task) => {
         if (selectedStatus !== "all" && task.status !== selectedStatus) return false;
-        if (selectedEditorId !== "all" && task.montajorId !== selectedEditorId) return false;
         return true;
       }),
-    [monthScopedTasks, selectedEditorId, selectedStatus]
+    [monthScopedTasks, selectedStatus]
   );
+
+  const boardColumns = useMemo(() => {
+    const sortedTasks = [...boardTasks].sort((a, b) => String(a.deadline || "").localeCompare(String(b.deadline || "")));
+    const unassigned = sortedTasks.filter((task) => !task.montajorId);
+    const editorColumns = editorEmployees.map((employee) => ({
+      id: employee.id,
+      employee,
+      tasks: sortedTasks.filter((task) => task.montajorId === employee.id),
+    }));
+    return [
+      { id: "unassigned", employee: null, tasks: unassigned },
+      ...editorColumns,
+    ];
+  }, [boardTasks, editorEmployees]);
 
   const summary = useMemo(
     () => ({
@@ -218,7 +394,9 @@ export const MontajPage = memo(function MontajPage({
     [editorEmployees, employeeMetricsById, localMetricsById]
   );
 
-  function updateVideoTask(task, patch) {
+  const profileRoleCode = profile?.roleCode || profile?.role;
+
+  const updateVideoTask = useCallback((task, patch) => {
     const project = projectsWithTasks.find((item) => item.id === task.projectId);
     if (!project || !canWorkInProject(profile, project)) return;
     const updatedTasks = (project.tasks || []).map((item) =>
@@ -232,19 +410,67 @@ export const MontajPage = memo(function MontajPage({
         : item
     );
     onSaveVideoTask({ ...project, tasks: updatedTasks }, { silent: true });
-  }
+  }, [onSaveVideoTask, profile, projectsWithTasks]);
 
-  const profileRoleCode = profile?.roleCode || profile?.role;
+  const applyTaskPatch = useCallback((task, patch) => {
+    if (patch.status === "Bajarildi") {
+      updateVideoTask(task, {
+        status: "Bajarildi",
+        finishedAt: patch.finishedAt || isoNow(),
+        approvedBy: patch.approvedBy || profile.uid,
+      });
+      return;
+    }
+    if (patch.status === "Qayta ishlash" && task.status === "Ko'rib chiqilmoqda" && patch.revisionCount != null) {
+      updateVideoTask(task, {
+        status: "Qayta ishlash",
+        revisionCount: patch.revisionCount,
+      });
+      return;
+    }
+    updateVideoTask(task, patch);
+  }, [profile.uid, updateVideoTask]);
+
+  const handleDropOnColumn = useCallback((e, targetMontajorId) => {
+    e.preventDefault();
+    setDragOverColumn(null);
+    let raw;
+    try {
+      raw = e.dataTransfer.getData(DRAG_MIME);
+    } catch {
+      return;
+    }
+    if (!raw) return;
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const task = boardTasks.find((t) => t.id === parsed.taskId && t.projectId === parsed.projectId);
+    if (!task) return;
+    const taskProject = task.project || projectsWithTasks.find((p) => p.id === task.projectId);
+    if (!canAssignTaskToEditor(profile, profileRoleCode, task, taskProject, targetMontajorId)) return;
+    const patch = { montajorId: targetMontajorId || "" };
+    if (targetMontajorId && task.status === "Kutilmoqda") {
+      patch.status = "Montajda";
+    }
+    applyTaskPatch(task, patch);
+  }, [applyTaskPatch, boardTasks, profile, profileRoleCode, projectsWithTasks]);
+
+  const handleClaim = useCallback((task) => {
+    updateVideoTask(task, { montajorId: profile.uid, status: task.status === "Kutilmoqda" ? "Montajda" : task.status });
+  }, [profile.uid, updateVideoTask]);
 
   return (
     <div>
       <PageHeader
         title="Montaj bo'limi"
-        subtitle={`${getMonthLabel(selectedMonthId)} bo'yicha video va reels nazorati`}
+        subtitle={`${getMonthLabel(selectedMonthId)} · Kanban taxtasi`}
       />
 
       <Card style={{ marginBottom: 18, padding: 16 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) minmax(180px, 220px) minmax(180px, 220px)", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) minmax(200px, 280px)", gap: 12 }}>
           <Field
             label="Oy"
             value={selectedMonthId}
@@ -252,160 +478,131 @@ export const MontajPage = memo(function MontajPage({
             options={monthIds.map((monthId) => ({ value: monthId, label: getMonthLabel(monthId) }))}
           />
           <Field
-            label="Holat"
+            label="Holat (filtr)"
             value={selectedStatus}
             onChange={setSelectedStatus}
-            options={[{ value: "all", label: "Barcha statuslar" }, ...MONTAJ_STATUSES.map((status) => ({ value: status, label: status }))]}
-          />
-          <Field
-            label="Montajor"
-            value={selectedEditorId}
-            onChange={setSelectedEditorId}
-            options={[{ value: "all", label: "Barcha montajorlar" }, ...editorEmployees.map((employee) => ({ value: employee.id, label: employee.name }))]}
+            options={[{ value: "all", label: "Barcha holatlar" }, ...MONTAJ_STATUSES.map((status) => ({ value: status, label: status }))]}
           />
         </div>
+        <p style={{ margin: "12px 0 0", fontSize: 12, color: T.colors.textMuted, lineHeight: 1.5 }}>
+          Kartani boshqa montajor ustuniga tortsangiz biriktirish yangilanadi. Kichik ekranda ustunlarni gorizontal aylantiring.
+        </p>
       </Card>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 18 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 18 }}>
         <Card style={{ padding: 18 }}>
           <div style={{ fontSize: 24, fontWeight: 900, color: T.colors.accent }}>{summary.total}</div>
           <div style={{ marginTop: 8, fontWeight: 800 }}>Jami video</div>
-          <div style={{ marginTop: 4, color: T.colors.textSecondary, fontSize: 12 }}>Tanlangan oy uchun umumiy video ishlar</div>
+          <div style={{ marginTop: 4, color: T.colors.textSecondary, fontSize: 12 }}>Tanlangan oy</div>
         </Card>
         <Card style={{ padding: 18 }}>
           <div style={{ fontSize: 24, fontWeight: 900, color: T.colors.green }}>{summary.ready}</div>
           <div style={{ marginTop: 8, fontWeight: 800 }}>Tayyor</div>
-          <div style={{ marginTop: 4, color: T.colors.textSecondary, fontSize: 12 }}>Bajarilib yakunlangan videolar</div>
+          <div style={{ marginTop: 4, color: T.colors.textSecondary, fontSize: 12 }}>Bajarildi</div>
         </Card>
         <Card style={{ padding: 18 }}>
           <div style={{ fontSize: 24, fontWeight: 900, color: T.colors.accent }}>{summary.active}</div>
-          <div style={{ marginTop: 8, fontWeight: 800 }}>Jarayonda</div>
-          <div style={{ marginTop: 4, color: T.colors.textSecondary, fontSize: 12 }}>Hozir montaj jarayonidagi videolar</div>
+          <div style={{ marginTop: 8, fontWeight: 800 }}>Montajda</div>
+          <div style={{ marginTop: 4, color: T.colors.textSecondary, fontSize: 12 }}>Aktiv ish</div>
         </Card>
         <Card style={{ padding: 18 }}>
           <div style={{ fontSize: 24, fontWeight: 900, color: T.colors.orange }}>{summary.review}</div>
           <div style={{ marginTop: 8, fontWeight: 800 }}>Ko'rib chiqilmoqda</div>
-          <div style={{ marginTop: 4, color: T.colors.textSecondary, fontSize: 12 }}>SMM ko'rib chiqishi kerak bo'lgan videolar</div>
+          <div style={{ marginTop: 4, color: T.colors.textSecondary, fontSize: 12 }}>Tasdiq kutmoqda</div>
         </Card>
       </div>
 
-      <Card style={{ marginBottom: canEdit(profile.role) ? 18 : 0 }}>
-        <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 12 }}>Barcha video tasklar</div>
-        {filteredTasks.length ? (
-          <DataTable columns={["#", "Video nomi", "Loyiha", "Format", "Deadline", "Montajor", "Holat", "Qayta ishlash", "Amal"]}>
-            {filteredTasks.map((task, index) => {
-              const taskProject = task.project || projectsWithTasks.find((project) => project.id === task.projectId);
-              const canWork = canWorkInProject(profile, taskProject);
-              const canAssignEditor = canEdit(profile.role) && canWork;
-              const canClaimTask = profileRoleCode === "EDITOR" && !task.montajorId && canWork;
-              const canMutateOwnTask = canEditOwnVideoTask(profile, task) && canWork && ["Montajda", "Qayta ishlash"].includes(task.status);
-              const statusOptions = canEdit(profile.role)
-                ? MONTAJ_STATUSES
-                : canMutateOwnTask
-                  ? [task.status, "Ko'rib chiqilmoqda"]
-                  : MONTAJ_STATUSES;
-              const assignedEditor = employeeMap[task.montajorId];
-              const showApproveActions = canApproveVideo(profile.role) && task.status === "Ko'rib chiqilmoqda" && canWork;
-
-              return (
-                <Row key={task.id}>
-                  <Cell>{index + 1}</Cell>
-                  <Cell>
-                    <div style={{ fontWeight: 800 }}>{task.name || "Nomsiz video"}</div>
-                    <div style={{ marginTop: 4, color: T.colors.textMuted, fontSize: 12 }}>{task.monthId ? getMonthLabel(task.monthId) : "Legacy / joriy oy"}</div>
-                  </Cell>
-                  <Cell>{task.projectName}</Cell>
-                  <Cell>
-                    <span style={{ background: T.colors.accentSoft, color: T.colors.accent, padding: "4px 8px", borderRadius: T.radius.full, fontSize: 11, fontWeight: 800 }}>
-                      {task.format}
-                    </span>
-                  </Cell>
-                  <Cell>{task.deadline || "-"}</Cell>
-                  <Cell style={{ minWidth: 180 }}>
-                    {canAssignEditor ? (
-                      <InlineSelect
-                        value={task.montajorId || ""}
-                        onChange={(montajorId) => updateVideoTask(task, { montajorId })}
-                        options={[
-                          { value: "", label: "Biriktirilmagan" },
-                          ...editorEmployees.map((employee) => ({ value: employee.id, label: employee.name })),
-                        ]}
-                      />
-                    ) : assignedEditor ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <Avatar name={assignedEditor.name} url={assignedEditor.avatarUrl} size={26} />
-                        <span>{assignedEditor.name}</span>
-                      </div>
-                    ) : (
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: T.colors.orangeSoft, color: "#b45309", padding: "5px 9px", borderRadius: T.radius.full, fontSize: 11, fontWeight: 800 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#b45309" }} />
-                        Biriktirilmagan
-                      </span>
-                    )}
-                  </Cell>
-                  <Cell>
-                    <StatusSelect
-                      value={task.status || "Kutilmoqda"}
-                      options={statusOptions}
-                      disabled={!(canEdit(profile.role) || canMutateOwnTask)}
-                      onChange={(status) => {
-                        if (canEdit(profile.role) && canWork) {
-                          updateVideoTask(task, { status });
-                          return;
-                        }
-                        if (canMutateOwnTask && status === "Ko'rib chiqilmoqda") {
-                          updateVideoTask(task, { status: "Ko'rib chiqilmoqda" });
-                        }
-                      }}
-                    />
-                  </Cell>
-                  <Cell>{task.revisionCount || 0}</Cell>
-                  <Cell>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                      {canClaimTask ? (
-                        <Button
-                          variant="warning"
-                          style={{ padding: "6px 10px" }}
-                          onClick={() => updateVideoTask(task, { montajorId: profile.uid, status: task.status === "Kutilmoqda" ? "Montajda" : task.status })}
-                        >
-                          Olish
-                        </Button>
-                      ) : null}
-                      {showApproveActions ? (
-                        <>
-                          <Button
-                            variant="success"
-                            style={{ padding: "6px 10px" }}
-                            onClick={() => updateVideoTask(task, {
-                              status: "Bajarildi",
-                              finishedAt: isoNow(),
-                              approvedBy: profile.uid,
-                            })}
-                          >
-                            Bajarildi
-                          </Button>
-                          <Button
-                            variant="danger"
-                            style={{ padding: "6px 10px" }}
-                            onClick={() => updateVideoTask(task, {
-                              status: "Qayta ishlash",
-                              revisionCount: (task.revisionCount || 0) + 1,
-                            })}
-                          >
-                            Qayta ishlash
-                          </Button>
-                        </>
-                      ) : null}
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          overflowX: "auto",
+          paddingBottom: 8,
+          alignItems: "stretch",
+          marginBottom: canEdit(profile.role) ? 18 : 0,
+          WebkitOverflowScrolling: "touch",
+        }}
+      >
+        {boardColumns.map((col) => {
+          const list = col.tasks || [];
+          const isOver = dragOverColumn === col.id;
+          const headerColor = col.employee ? designerTone(col.employee.name) : T.colors.orange;
+          return (
+            <div
+              key={col.id}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                setDragOverColumn(col.id);
+              }}
+              onDrop={(e) => handleDropOnColumn(e, col.employee?.id || "")}
+              style={{
+                flex: "1 1 280px",
+                minWidth: 260,
+                maxWidth: 340,
+                display: "flex",
+                flexDirection: "column",
+                background: T.colors.borderLight,
+                borderRadius: T.radius.xl,
+                border: `2px solid ${isOver ? T.colors.accent : "transparent"}`,
+                boxSizing: "border-box",
+                transition: "border-color .15s ease",
+              }}
+            >
+              <div
+                style={{
+                  padding: "12px 14px",
+                  borderBottom: `1px solid ${T.colors.border}`,
+                  borderRadius: `${T.radius.xl}px ${T.radius.xl}px 0 0`,
+                  background: `linear-gradient(180deg, ${col.employee ? `${headerColor}1a` : T.colors.orangeSoft} 0%, ${T.colors.surface} 100%)`,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {col.employee ? <Avatar name={col.employee.name} url={col.employee.avatarUrl} size={28} /> : null}
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 900, fontSize: 13, color: col.employee ? headerColor : "#b45309" }}>
+                      {col.employee ? col.employee.name : "Biriktirilmagan"}
                     </div>
-                  </Cell>
-                </Row>
-              );
-            })}
-          </DataTable>
-        ) : (
-          <EmptyState title="Video tasklar topilmadi" desc="Tanlangan oy yoki filtr bo'yicha mos video/reels tasklar hali yo'q." />
-        )}
-      </Card>
+                    <div style={{ fontSize: 11, color: T.colors.textMuted, marginTop: 4 }}>
+                      {list.length} ta TZ
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 10, flex: 1, minHeight: 120, maxHeight: "min(70vh, 720px)", overflowY: "auto" }}>
+                {list.length === 0 ? (
+                  <div style={{ fontSize: 12, color: T.colors.textTertiary, textAlign: "center", padding: "20px 8px" }}>
+                    Bo'sh
+                  </div>
+                ) : (
+                  list.map((task, i) => (
+                    <MontajTaskCard
+                      key={`${task.projectId}-${task.id}`}
+                      task={task}
+                      index={i}
+                      projectsWithTasks={projectsWithTasks}
+                      profile={profile}
+                      profileRoleCode={profileRoleCode}
+                      employeeMap={employeeMap}
+                      editorEmployees={editorEmployees}
+                      dragging={dragging}
+                      setDragging={setDragging}
+                      onStatusChange={applyTaskPatch}
+                      onClaim={handleClaim}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {!boardTasks.length ? (
+        <Card style={{ marginBottom: 18 }}>
+          <EmptyState title="Video tasklar topilmadi" desc="Tanlangan oy yoki montajor filtri bo'yicha mos video/reels tasklar hali yo'q." />
+        </Card>
+      ) : null}
 
       {canEdit(profile.role) ? (
         <div>

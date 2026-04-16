@@ -762,13 +762,21 @@ function AppShell() {
 
     const projectRef  = doc(db, "projects", next.id);
     const metaDoc     = projectMetaDocFromProject(next, profile, currentMeta);
+    const workspaceMetaPatch = hasWs ? {
+      metrics: computeProjectMetrics(next),
+      memberStats: computeProjectMemberStats(next),
+      updatedAt: metaDoc.updatedAt,
+      updatedBy: metaDoc.updatedBy,
+    } : null;
     const nextProjects= nextProjectListAfterSave(metaDoc, next.id);
     const affected    = new Set([currentMeta?.managerId, ...(currentMeta?.teamIds || []), next.managerId, ...next.teamIds].filter(Boolean));
     const workspaceOnly = Boolean(meta.workspaceOnly);
     const shouldWriteProjectMeta = canWriteMeta && (!workspaceOnly || profile.role === "CEO");
+    const shouldWriteWorkspaceMeta = Boolean(workspaceOnly && canWorkProject && !shouldWriteProjectMeta && workspaceMetaPatch);
     const metaDocs    = canEdit(profile.role) && !workspaceOnly ? createMetaDocs(meta, profile) : [];
     const ops = [
       ...(shouldWriteProjectMeta ? [{ type: "set", ref: projectRef, data: metaDoc, options: { merge: true } }] : []),
+      ...(shouldWriteWorkspaceMeta ? [{ type: "set", ref: projectRef, data: workspaceMetaPatch, options: { merge: true } }] : []),
       ...metaDocs.map(i => ({ type: "set", ref: doc(db, i.collection, i.id), data: i.data, options: { merge: false } })),
       ...((shouldWriteProjectMeta && !workspaceOnly) ? buildAssignedProjectIdOps(nextProjects, affected, publicUsersRef.current) : []),
     ];
