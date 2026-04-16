@@ -134,6 +134,10 @@ service cloud.firestore {
         allow read:               if canReadSubcollection(projectId);
         allow create, update, delete: if canWorkOnProject(projectId);
       }
+      match /targetTasks/{taskId} {
+        allow read:               if canReadSubcollection(projectId);
+        allow create, update, delete: if canWorkOnProject(projectId);
+      }
     }
 
     // ── Shoots ────────────────────────────────────────────────────────────────

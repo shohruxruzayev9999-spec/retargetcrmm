@@ -33,6 +33,12 @@ export function canEditDesignTask(profile, task) {
   return task.smmManagerId === profile.uid || task.designerId === profile.uid;
 }
 
+export function canManageTargetStatus(profile) {
+  if (!profile) return false;
+  const probe = `${profile.name || ""} ${profile.email || ""}`.toLowerCase();
+  return profile.role === "CEO" || probe.includes("mirzobek");
+}
+
 function hasAssignedProject(profile, project) {
   return Boolean(profile && project && Array.isArray(profile.assignedProjectIds) && profile.assignedProjectIds.includes(project.id));
 }

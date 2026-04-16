@@ -56,6 +56,7 @@ import { ShootingPage }      from "./pages/ShootingPage.jsx";
 import { FinancePage }       from "./pages/FinancePage.jsx";
 import { MontajPage }        from "./pages/MontajPage.jsx";
 import { DesignPage }        from "./pages/DesignPage.jsx";
+import { TargetPage }        from "./pages/TargetPage.jsx";
 import { WorkflowPage }      from "./pages/WorkflowPage.jsx";
 // ─── Firestore collection refs (ARCH-02 FIX: module-level, not per-render) ────
 // These are stable references — created once when module loads.
@@ -93,6 +94,7 @@ function Sidebar({ profile, page, onNavigate, onLogout }) {
     { id: "shooting",      label: "Syomka",            icon: "◎" },
     { id: "montaj",        label: "Montaj bo'limi",    icon: "✂" },
     { id: "design",        label: "Grafik dizayn",     icon: "◈" },
+    { id: "target",        label: "Target bo'limi",    icon: "◌" },
     ...(canViewFinancialDashboard(profile.role) ? [{ id: "finance", label: "Moliyaviy dashboard", icon: "◍" }] : []),
     { id: "workflow",      label: "Workflow",          icon: "⋯" },
   ];
@@ -308,6 +310,7 @@ function AppShell() {
   const [privateUsers,        setPrivateUsers]        = useState(initPrivate);
   const [shootDocs,           setShootDocs]           = useState(initShoots);
   const [designTaskDocs,      setDesignTaskDocs]      = useState([]);
+  const [targetTaskDocs,      setTargetTaskDocs]      = useState([]);
   const [liveWorkspaceMetricsByProjectId, setLiveWorkspaceMetricsByProjectId] = useState({});
   const [selectedProjectWorkspace, setSelectedProjectWorkspace] = useState(EMPTY_PROJECT_WORKSPACE);
   const [page,               setPage]               = useState("dashboard");
@@ -332,6 +335,7 @@ function AppShell() {
   const assignmentSyncRef      = useRef("");
   const selectedProjectRef     = useRef(null);
   const designTaskDocsRef      = useRef([]);
+  const targetTaskDocsRef      = useRef([]);
   const pendingWorkspaceRef    = useRef({});
   const initialCacheRef        = useRef(cachedCrm);
 
@@ -391,6 +395,7 @@ function AppShell() {
   useEffect(() => { publicUsersRef.current  = publicUsers; },  [publicUsers]);
   useEffect(() => { selectedProjectRef.current = selectedProject; }, [selectedProject]);
   useEffect(() => { designTaskDocsRef.current = designTaskDocs; }, [designTaskDocs]);
+  useEffect(() => { targetTaskDocsRef.current = targetTaskDocs; }, [targetTaskDocs]);
 
   // ── Toast helpers ─────────────────────────────────────────────────────────
   function pushToast(text, tone = "success") {
@@ -424,6 +429,7 @@ function AppShell() {
           setProjectDocs([]); setPublicUsers([]); setPrivateUsers({});
           setShootDocs([]);
           setDesignTaskDocs([]);
+          setTargetTaskDocs([]);
           setSelectedProjectWorkspace(EMPTY_PROJECT_WORKSPACE);
           setDesignProjectId("");
           setProjectsReady(false); setPublicUsersReady(false);
@@ -649,6 +655,33 @@ function AppShell() {
         });
       }, (error) => {
         console.error("[CRM] designTasks:", error?.code);
+      });
+      unsubs.push(unsub);
+    });
+    return () => unsubs.forEach((unsub) => unsub());
+  }, [profile?.uid, page, projects.length]);
+
+  // ── Target tasks (page-gated, all visible projects) ─────────────────────
+  useEffect(() => {
+    if (!profile || !db || page !== "target") return;
+    if (!projects.length) {
+      setTargetTaskDocs([]);
+      return;
+    }
+    const unsubs = [];
+    const allDocs = {};
+    projects.forEach((proj) => {
+      const colRef = collection(db, "projects", proj.id, "targetTasks");
+      const unsub = onSnapshot(colRef, (snap) => {
+        allDocs[proj.id] = snap.docs.map((entry) => ({
+          ...normalizeStoredRecord(entry.id, entry.data()),
+          projectId: proj.id,
+        }));
+        startTransition(() => {
+          setTargetTaskDocs(Object.values(allDocs).flat());
+        });
+      }, (error) => {
+        console.error("[CRM] targetTasks:", error?.code);
       });
       unsubs.push(unsub);
     });
@@ -1084,6 +1117,84 @@ function AppShell() {
     }
   }, [profile, designTaskDocs, confirm]);
 
+  // ─── Target task CRUD ────────────────────────────────────────────────────
+  const saveTargetTask = useCallback(async (projectId, task) => {
+    if (!projectId || !db) return;
+    const relatedProject = projectDocsRef.current.find((project) => project.id === projectId);
+    if (!canWorkInProject(profile, relatedProject)) return;
+    const previousTask = targetTaskDocsRef.current.find((item) => item.id === task.id && item.projectId === projectId) || null;
+    const next = withRecordMeta(
+      task.id ? task : { ...task, id: makeId("target") },
+      profile
+    );
+    const metaDocs = canEdit(profile?.role)
+      ? createMetaDocs({
+        notifyText: `Target task: ${next.title}`,
+        auditText: `Target task saqlandi: ${next.title}`,
+        page: "target",
+      }, profile)
+      : [];
+    startTransition(() => {
+      setTargetTaskDocs((current) => {
+        const filtered = current.filter((item) => !(item.id === next.id && item.projectId === projectId));
+        return [...filtered, { ...next, projectId }];
+      });
+      applyOptimisticMetaDocs(metaDocs);
+    });
+    setSyncing(true);
+    try {
+      await commitBatchOperations([
+        {
+          type: "set",
+          ref: doc(db, "projects", projectId, "targetTasks", next.id),
+          data: next,
+          options: { merge: true },
+        },
+        ...metaDocs.map((item) => ({
+          type: "set",
+          ref: doc(db, item.collection, item.id),
+          data: item.data,
+          options: { merge: false },
+        })),
+      ]);
+      pushToast(`Target task saqlandi: ${next.title}`);
+    } catch (error) {
+      startTransition(() => {
+        setTargetTaskDocs((current) => {
+          const filtered = current.filter((item) => !(item.id === next.id && item.projectId === projectId));
+          return previousTask ? [...filtered, previousTask] : filtered;
+        });
+      });
+      const message = String(error?.code || "").includes("permission-denied")
+        ? "Target task saqlanmadi. Firebase Firestore Rules ichida targetTasks qoidalarini publish qiling."
+        : humanizeAuthError(error);
+      setAuthError(message);
+      pushToast(message, "error");
+    } finally {
+      setSyncing(false);
+    }
+  }, [profile]);
+
+  const deleteTargetTask = useCallback(async (projectId, taskId) => {
+    const task = targetTaskDocs.find((item) => item.id === taskId);
+    if (!task) return;
+    const ok = await confirm(`"${task.title}" target task o'chirilsinmi?`);
+    if (!ok) return;
+    startTransition(() => {
+      setTargetTaskDocs((current) => current.filter((item) => item.id !== taskId));
+    });
+    setSyncing(true);
+    try {
+      await commitBatchOperations([{ type: "delete", ref: doc(db, "projects", projectId, "targetTasks", taskId) }]);
+      pushToast("Target task o'chirildi");
+    } catch (error) {
+      setAuthError(humanizeAuthError(error));
+      pushToast(humanizeAuthError(error), "error");
+    } finally {
+      setSyncing(false);
+    }
+  }, [targetTaskDocs, confirm]);
+
   // ─── Render guard ──────────────────────────────────────────────────────────
   if (!hasFirebaseConfig) return <SetupScreen />;
   if (booting) return <LoadingScreen label="CRM yuklanmoqda..." />;
@@ -1118,6 +1229,16 @@ function AppShell() {
               designTaskDocs={designTaskDocs}
               onSaveDesignTask={saveDesignTask}
               onDeleteDesignTask={deleteDesignTask}
+            />
+          )}
+          {page === "target"        && (
+            <TargetPage
+              profile={profile}
+              projects={projects}
+              employees={employees}
+              targetTaskDocs={targetTaskDocs}
+              onSaveTargetTask={saveTargetTask}
+              onDeleteTargetTask={deleteTargetTask}
             />
           )}
           {page === "finance" && canViewFinancialDashboard(profile.role) && <FinancePage projects={projects} employees={employees} />}
