@@ -96,12 +96,32 @@ export function splitPlans(items = []) {
 
 // ─── Metrics ──────────────────────────────────────────────────────────────────
 export function calcProjectProgress(project) {
-  if (Number.isFinite(project?.metrics?.progress) && !(Array.isArray(project?.tasks) && project.tasks.length)) {
+  const tasks = Array.isArray(project?.tasks) ? project.tasks : [];
+  const contentPlan = Array.isArray(project?.contentPlan) ? project.contentPlan : [];
+  const mediaPlan = Array.isArray(project?.mediaPlan) ? project.mediaPlan : [];
+  const planItems = [
+    ...(Array.isArray(project?.plans?.daily) ? project.plans.daily : []),
+    ...(Array.isArray(project?.plans?.weekly) ? project.plans.weekly : []),
+    ...(Array.isArray(project?.plans?.monthly) ? project.plans.monthly : []),
+  ];
+  const calls = Array.isArray(project?.calls) ? project.calls : [];
+  const hasWorkspaceItems = tasks.length || contentPlan.length || mediaPlan.length || planItems.length || calls.length;
+  if (Number.isFinite(project?.metrics?.progress) && !hasWorkspaceItems) {
     return Number(project.metrics.progress);
   }
-  const tasks = Array.isArray(project?.tasks) ? project.tasks : [];
-  if (!tasks.length) return 0;
-  return Math.round((tasks.filter(t => t.status === "Bajarildi" || t.status === "Tasdiqlandi").length / tasks.length) * 100);
+  const isTaskDone = (status) => status === "Bajarildi" || status === "Tasdiqlandi";
+  const isContentDone = (status) => status === "Tasdiqlandi" || status === "E'lon qilindi" || status === "Bajarildi";
+  const isPlanDone = (status) => status === "Bajarildi" || status === "Tasdiqlandi";
+  const isCallDone = (status) => status === "Tasdiqlangan" || status === "Tugallangan" || status === "Bajarildi";
+  const totalItems = tasks.length + contentPlan.length + mediaPlan.length + planItems.length + calls.length;
+  if (!totalItems) return 0;
+  const doneItems =
+    tasks.filter((task) => isTaskDone(task.status)).length +
+    contentPlan.filter((item) => isContentDone(item.status)).length +
+    mediaPlan.filter((item) => isContentDone(item.status)).length +
+    planItems.filter((item) => isPlanDone(item.status)).length +
+    calls.filter((item) => isCallDone(item.status)).length;
+  return Math.round((doneItems / totalItems) * 100);
 }
 
 // PERF-04 FIX: O(employees × projects × tasks) → O(n) index lookup

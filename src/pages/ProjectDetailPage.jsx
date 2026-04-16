@@ -156,16 +156,27 @@ function hasCallRowValue(row, defaultWhoId) {
 function buildMonthStats(project, monthId) {
   const monthsExist = Array.isArray(project.months) && project.months.length > 0;
   const scopedTasks = monthScopedTasks(project.tasks || [], monthId, monthsExist);
-  const doneTasks = scopedTasks.filter((task) => isCompletedTaskStatus(task.status)).length;
-  const progress = scopedTasks.length ? Math.round((doneTasks / scopedTasks.length) * 100) : 0;
+  const scopedContent = (project.contentPlan || []).filter((item) => recordMatchesMonth(item, monthId));
+  const scopedMedia = (project.mediaPlan || []).filter((item) => recordMatchesMonth(item, monthId));
+  const scopedPlans = [...(project.plans?.daily || []), ...(project.plans?.weekly || []), ...(project.plans?.monthly || [])]
+    .filter((item) => recordMatchesMonth(item, monthId));
+  const scopedCalls = (project.calls || []).filter((item) => recordMatchesMonth(item, monthId));
+  const doneTasks =
+    scopedTasks.filter((task) => isCompletedTaskStatus(task.status)).length +
+    scopedContent.filter((item) => item.status === "Tasdiqlandi" || item.status === "E'lon qilindi" || item.status === "Bajarildi").length +
+    scopedMedia.filter((item) => item.status === "Tasdiqlandi" || item.status === "E'lon qilindi" || item.status === "Bajarildi").length +
+    scopedPlans.filter((item) => item.status === "Tasdiqlandi" || item.status === "Bajarildi").length +
+    scopedCalls.filter((item) => item.status === "Tasdiqlangan" || item.status === "Tugallangan" || item.status === "Bajarildi").length;
+  const totalWorkItems = scopedTasks.length + scopedContent.length + scopedMedia.length + scopedPlans.length + scopedCalls.length;
+  const progress = totalWorkItems ? Math.round((doneTasks / totalWorkItems) * 100) : 0;
   return {
     progress,
     doneTasks,
-    totalTasks: scopedTasks.length,
-    contentCount: monthScopedCount(project.contentPlan, monthId),
-    mediaCount: monthScopedCount(project.mediaPlan, monthId),
-    plansCount: monthScopedCount(project.plans?.daily || [], monthId),
-    callsCount: monthScopedCount(project.calls, monthId),
+    totalTasks: totalWorkItems,
+    contentCount: scopedContent.length,
+    mediaCount: scopedMedia.length,
+    plansCount: scopedPlans.length,
+    callsCount: scopedCalls.length,
   };
 }
 

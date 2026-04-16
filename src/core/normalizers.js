@@ -155,13 +155,47 @@ export function mergeEmployeeDocs(publicUsers, privateUsers, viewerRole, project
 export function computeProjectMetrics(project) {
   const tasks = Array.isArray(project.tasks) ? project.tasks : [];
   const contentPlan = Array.isArray(project.contentPlan) ? project.contentPlan : [];
+  const mediaPlan = Array.isArray(project.mediaPlan) ? project.mediaPlan : [];
+  const planItems = [
+    ...(Array.isArray(project.plans?.daily) ? project.plans.daily : []),
+    ...(Array.isArray(project.plans?.weekly) ? project.plans.weekly : []),
+    ...(Array.isArray(project.plans?.monthly) ? project.plans.monthly : []),
+  ];
+  const calls = Array.isArray(project.calls) ? project.calls : [];
   const today = todayIso();
-  const completedTasks = tasks.filter(t => t.status === "Bajarildi" || t.status === "Tasdiqlandi").length;
-  const approvedTasks  = tasks.filter(t => t.status === "Tasdiqlandi").length;
-  const activeTasks    = tasks.filter(t => t.status === "Jarayonda" || t.status === "Ko'rib chiqilmoqda").length;
-  const overdueTasks   = tasks.filter(t => t.deadline && t.deadline < today && t.status !== "Bajarildi" && t.status !== "Tasdiqlandi").length;
-  const pendingReviews = contentPlan.filter(i => i.status === "Ko'rib chiqilmoqda").length;
-  const totalTasks = tasks.length;
+  const isTaskDone = (status) => status === "Bajarildi" || status === "Tasdiqlandi";
+  const isContentDone = (status) => status === "Tasdiqlandi" || status === "E'lon qilindi" || status === "Bajarildi";
+  const isPlanDone = (status) => status === "Bajarildi" || status === "Tasdiqlandi";
+  const isCallDone = (status) => status === "Tasdiqlangan" || status === "Tugallangan" || status === "Bajarildi";
+  const completedTasks =
+    tasks.filter(t => isTaskDone(t.status)).length +
+    contentPlan.filter(i => isContentDone(i.status)).length +
+    mediaPlan.filter(i => isContentDone(i.status)).length +
+    planItems.filter(i => isPlanDone(i.status)).length +
+    calls.filter(i => isCallDone(i.status)).length;
+  const approvedTasks =
+    tasks.filter(t => t.status === "Tasdiqlandi").length +
+    contentPlan.filter(i => i.status === "Tasdiqlandi").length +
+    mediaPlan.filter(i => i.status === "Tasdiqlandi").length +
+    planItems.filter(i => i.status === "Tasdiqlandi").length +
+    calls.filter(i => i.status === "Tasdiqlangan").length;
+  const activeTasks =
+    tasks.filter(t => t.status === "Jarayonda" || t.status === "Ko'rib chiqilmoqda").length +
+    contentPlan.filter(i => i.status === "Jarayonda" || i.status === "Ko'rib chiqilmoqda").length +
+    mediaPlan.filter(i => i.status === "Jarayonda" || i.status === "Ko'rib chiqilmoqda").length +
+    planItems.filter(i => i.status === "Jarayonda").length +
+    calls.filter(i => i.status === "Jarayonda" || i.status === "Kutilmoqda").length;
+  const overdueTasks =
+    tasks.filter(t => t.deadline && t.deadline < today && !isTaskDone(t.status)).length +
+    contentPlan.filter(i => i.date && i.date < today && !isContentDone(i.status)).length +
+    mediaPlan.filter(i => i.date && i.date < today && !isContentDone(i.status)).length +
+    planItems.filter(i => i.date && i.date < today && !isPlanDone(i.status)).length +
+    calls.filter(i => i.date && i.date < today && !isCallDone(i.status)).length;
+  const pendingReviews =
+    tasks.filter(t => t.status === "Ko'rib chiqilmoqda").length +
+    contentPlan.filter(i => i.status === "Ko'rib chiqilmoqda").length +
+    mediaPlan.filter(i => i.status === "Ko'rib chiqilmoqda").length;
+  const totalTasks = tasks.length + contentPlan.length + mediaPlan.length + planItems.length + calls.length;
   return { totalTasks, completedTasks, approvedTasks, activeTasks, overdueTasks, pendingReviews, progress: totalTasks ? Math.round((completedTasks / totalTasks) * 100) : 0 };
 }
 
