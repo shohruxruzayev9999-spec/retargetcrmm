@@ -11,9 +11,22 @@ import {
   Avatar, Button, Card, EmptyState, Field, PageHeader, StatusBadge, StatusSelect,
 } from "../components/ui/index.jsx";
 
+const MONTAJ_COLUMN_COLORS = [
+  T.colors.accent,
+  T.colors.purple,
+  T.colors.orange,
+  T.colors.green,
+  T.colors.indigo,
+  T.colors.red,
+];
+
 function monthMatches(task, monthId) {
   if (!task.monthId) return monthId === getCurrentMonthId();
   return task.monthId === monthId;
+}
+
+function designerTone(name = "") {
+  return MONTAJ_COLUMN_COLORS[(name?.charCodeAt(0) || 0) % MONTAJ_COLUMN_COLORS.length];
 }
 
 function isVideoLikeTask(task) {
