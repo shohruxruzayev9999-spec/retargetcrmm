@@ -367,7 +367,6 @@ export const TargetPage = memo(function TargetPage({
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
         <PageHeader
           title="Target bo'limi"
-          subtitle="Har bir loyiha bo'yicha target tasklar kanban ko'rinishida"
         />
         {canCreateAny ? <Button onClick={() => openNewTask("")}>+ Task qo'shish</Button> : null}
       </div>
@@ -386,14 +385,6 @@ export const TargetPage = memo(function TargetPage({
               {overallStats.done}/{overallStats.total} task bajarilgan
             </div>
           </div>
-        </Card>
-        <Card style={{ padding: "14px 16px", background: T.colors.bg }}>
-          <div style={{ fontSize: 12, color: T.colors.textMuted }}>Statusni o'zgartiradi</div>
-          <div style={{ marginTop: 6, fontSize: 14, fontWeight: 800 }}>CEO va Mirzobek</div>
-        </Card>
-        <Card style={{ padding: "14px 16px", background: T.colors.bg }}>
-          <div style={{ fontSize: 12, color: T.colors.textMuted }}>Task qo'shadi</div>
-          <div style={{ marginTop: 6, fontSize: 14, fontWeight: 800 }}>Barcha loyiha a'zolari</div>
         </Card>
       </div>
 
