@@ -49,6 +49,30 @@ export const DashboardPage = memo(function DashboardPage({ profile, projects, em
     });
 
   const topEmployee = ranking[0];
+  const teamLoadRows = useMemo(() => {
+    const rows = employees.map((employee) => {
+      const metrics = employeeMetricsById[employee.id] || { active: 0, overdue: 0, projects: 0 };
+      return {
+        employee,
+        metrics: {
+          active: Number(metrics.active || 0),
+          overdue: Number(metrics.overdue || 0),
+          projects: Number(metrics.projects || 0),
+        },
+      };
+    });
+    const maxActive = Math.max(...rows.map((row) => row.metrics.active), 0);
+    const maxOverdue = Math.max(...rows.map((row) => row.metrics.overdue), 0);
+    const maxProjects = Math.max(...rows.map((row) => row.metrics.projects), 0);
+    return rows.map((row) => {
+      const activeScore = maxActive ? (row.metrics.active / maxActive) * 70 : 0;
+      const overdueScore = maxOverdue ? (row.metrics.overdue / maxOverdue) * 20 : 0;
+      const projectScore = maxProjects ? (row.metrics.projects / maxProjects) * 10 : 0;
+      const hasWorkSignals = row.metrics.active > 0 || row.metrics.overdue > 0 || row.metrics.projects > 0;
+      const load = hasWorkSignals ? Math.round(clamp(activeScore + overdueScore + projectScore, 0, 100)) : 0;
+      return { ...row, load };
+    });
+  }, [employees, employeeMetricsById]);
 
   return (
     <div>
@@ -109,7 +133,7 @@ export const DashboardPage = memo(function DashboardPage({ profile, projects, em
 
             <div style={{ display: "grid", gap: 18 }}>
               <Card>
-                <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 12 }}>Oyning eng kuchli xodimi</div>
+                <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 12 }}>Oyning TOP xodimi</div>
                 {topEmployee ? (
                   <>
                     <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -134,9 +158,7 @@ export const DashboardPage = memo(function DashboardPage({ profile, projects, em
                 <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 12 }}>Jamoa yuklamasi</div>
                 {employees.length ? (
                   <div style={{ display: "grid", gap: 10 }}>
-                    {employees.map((employee) => {
-                      const metrics = employeeMetricsById[employee.id] || { active: 0, projects: 0 };
-                      const load = clamp(metrics.active * 18 + metrics.projects * 10, 0, 100);
+                    {teamLoadRows.map(({ employee, load }) => {
                       return (
                         <div key={employee.id}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
