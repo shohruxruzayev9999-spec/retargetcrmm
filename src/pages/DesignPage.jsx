@@ -916,9 +916,6 @@ const DesignTaskModal = memo(function DesignTaskModal({
 
   const isNew = !task.id;
   const canEditForm = isNew ? canCreateDesignTask(profile?.role) : canEditDesignTask(profile, task);
-  const canApprove = canApproveDesignTask(profile?.role);
-  const canDelete = Boolean(task.id && (canApprove || task.smmManagerId === profile?.uid));
-  const canChangeStatus = canWorkInProject(profile, selectedProject || projects.find((project) => project.id === task.projectId));
 
   const projectOptions = useMemo(
     () => projects.map((project) => ({ value: project.id, label: project.name })),
@@ -928,6 +925,12 @@ const DesignTaskModal = memo(function DesignTaskModal({
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === form.projectId) || null,
     [projects, form.projectId]
+  );
+  const canApprove = canApproveDesignTask(profile?.role);
+  const canDelete = Boolean(task.id && (canApprove || task.smmManagerId === profile?.uid));
+  const canChangeStatus = canWorkInProject(
+    profile,
+    selectedProject || projects.find((project) => project.id === task.projectId)
   );
 
   const designerOptions = useMemo(() => {

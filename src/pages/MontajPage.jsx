@@ -20,6 +20,8 @@ const MONTAJ_COLUMN_COLORS = [
   T.colors.red,
 ];
 
+const FINISHED_MONTAJ_STATUSES = new Set(["Bajarildi"]);
+
 function monthMatches(task, monthId) {
   if (!task.monthId) return monthId === getCurrentMonthId();
   return task.monthId === monthId;
@@ -59,6 +61,32 @@ function calcEditorKpi(metrics) {
   const penalty = (metrics.videoRevision || 0) * 3;
   const raw = base + deadline + bonus - penalty;
   return Math.max(0, Math.min(100, raw));
+}
+
+function taskSortTimestamp(task) {
+  return String(
+    task.finishedAt
+    || task.updatedAt
+    || task.createdAt
+    || task.deadline
+    || ""
+  );
+}
+
+function sortMontajColumnTasks(tasks = []) {
+  return [...tasks].sort((left, right) => {
+    const leftFinished = FINISHED_MONTAJ_STATUSES.has(left.status);
+    const rightFinished = FINISHED_MONTAJ_STATUSES.has(right.status);
+    if (leftFinished !== rightFinished) return leftFinished ? 1 : -1;
+
+    const leftTs = taskSortTimestamp(left);
+    const rightTs = taskSortTimestamp(right);
+    if (leftTs !== rightTs) return rightTs.localeCompare(leftTs);
+
+    const leftName = String(left.name || "");
+    const rightName = String(right.name || "");
+    return leftName.localeCompare(rightName);
+  });
 }
 
 function buildVideoMetrics(tasks, employeeMap) {
@@ -362,12 +390,11 @@ export const MontajPage = memo(function MontajPage({
   );
 
   const boardColumns = useMemo(() => {
-    const sortedTasks = [...boardTasks].sort((a, b) => String(a.deadline || "").localeCompare(String(b.deadline || "")));
-    const unassigned = sortedTasks.filter((task) => !task.montajorId);
+    const unassigned = sortMontajColumnTasks(boardTasks.filter((task) => !task.montajorId));
     const editorColumns = editorEmployees.map((employee) => ({
       id: employee.id,
       employee,
-      tasks: sortedTasks.filter((task) => task.montajorId === employee.id),
+      tasks: sortMontajColumnTasks(boardTasks.filter((task) => task.montajorId === employee.id)),
     }));
     return [
       { id: "unassigned", employee: null, tasks: unassigned },
