@@ -3,7 +3,7 @@ import {
   T, TASK_STATUSES, PRIORITIES, LIMITS,
 } from "../core/constants.js";
 import {
-  canManageTargetStatus, canWorkInProject, projectMembers,
+  canWorkInProject, projectMembers,
 } from "../core/permissions.js";
 import {
   Avatar, Button, Card, CircleProgress, EmptyState, Field, Modal, PageHeader, PriorityBadge, StatusSelect,
@@ -171,7 +171,7 @@ const TargetTaskModal = memo(function TargetTaskModal({
     })),
     [project, employees]
   );
-  const canManageStatus = canManageTargetStatus(profile);
+  const canManageStatus = canWorkInProject(profile, project);
   const canDelete = Boolean(form.id && (form.createdBy === profile?.uid || canManageStatus));
 
   const update = useCallback((key, value) => {
@@ -185,7 +185,7 @@ const TargetTaskModal = memo(function TargetTaskModal({
       await onSaveTargetTask(form.projectId, {
         ...form,
         title: form.title.trim(),
-        status: canManageStatus ? form.status : (task?.status || form.status || "Rejalashtirildi"),
+        status: form.status || "Rejalashtirildi",
       });
       onClose();
     } finally {
@@ -355,12 +355,13 @@ export const TargetPage = memo(function TargetPage({
   }, []);
 
   const handleStatusChange = useCallback(async (task, status) => {
-    if (!canManageTargetStatus(profile)) return;
+    const project = projects.find((item) => item.id === task.projectId);
+    if (!canWorkInProject(profile, project)) return;
     await onSaveTargetTask(task.projectId, {
       ...task,
       status,
     });
-  }, [onSaveTargetTask, profile]);
+  }, [onSaveTargetTask, profile, projects]);
 
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -434,7 +435,7 @@ export const TargetPage = memo(function TargetPage({
                       task={task}
                       project={project}
                       employeeMap={employeeMap}
-                      canManageStatus={canManageTargetStatus(profile)}
+                      canManageStatus={canWorkInProject(profile, project)}
                       onOpen={openTask}
                       onStatusChange={handleStatusChange}
                     />

@@ -19,7 +19,7 @@ import {
 import {
   makeId, isoNow, toMoney, clamp, sortByRecent, indexById,
   readCache, writeCache, projectWorkspaceCacheKey,
-  flattenPlans, splitPlans, calcProjectProgress, buildProjectCaches,
+  flattenPlans, splitPlans, calcProjectProgress, buildProjectCaches, todayIso,
   healthScore, humanizeAuthError,
 } from "./core/utils.js";
 import {
@@ -83,6 +83,65 @@ function mergePlanWorkspace(basePlans = { daily: [], weekly: [], monthly: [] }, 
 function containsAllIds(expectedItems = [], actualItems = []) {
   const actualIds = new Set((actualItems || []).filter(Boolean).map((item) => item.id));
   return (expectedItems || []).every((item) => actualIds.has(item.id));
+}
+
+function summarizeDesignTaskMetrics(tasks = []) {
+  const today = todayIso();
+  return tasks.reduce((acc, task) => {
+    acc.totalTasks += 1;
+    if (task.status === "Yakunlandi" || task.status === "Tasdiqlandi") acc.completedTasks += 1;
+    if (task.status === "Tasdiqlandi") acc.approvedTasks += 1;
+    if (task.status === "Yangi TZ" || task.status === "Jarayonda" || task.status === "Ko'rib chiqilmoqda") acc.activeTasks += 1;
+    if (task.status === "Ko'rib chiqilmoqda") acc.pendingReviews += 1;
+    if (task.deadline && task.deadline < today && task.status !== "Yakunlandi" && task.status !== "Tasdiqlandi") {
+      acc.overdueTasks += 1;
+    }
+    return acc;
+  }, {
+    totalTasks: 0,
+    completedTasks: 0,
+    approvedTasks: 0,
+    activeTasks: 0,
+    overdueTasks: 0,
+    pendingReviews: 0,
+  });
+}
+
+function summarizeTargetTaskMetrics(tasks = []) {
+  const today = todayIso();
+  return tasks.reduce((acc, task) => {
+    acc.totalTasks += 1;
+    if (task.status === "Bajarildi" || task.status === "Tasdiqlandi") acc.completedTasks += 1;
+    if (task.status === "Tasdiqlandi") acc.approvedTasks += 1;
+    if (task.status === "Rejalashtirildi" || task.status === "Jarayonda" || task.status === "Ko'rib chiqilmoqda") acc.activeTasks += 1;
+    if (task.status === "Ko'rib chiqilmoqda") acc.pendingReviews += 1;
+    if (task.deadline && task.deadline < today && task.status !== "Bajarildi" && task.status !== "Tasdiqlandi") {
+      acc.overdueTasks += 1;
+    }
+    return acc;
+  }, {
+    totalTasks: 0,
+    completedTasks: 0,
+    approvedTasks: 0,
+    activeTasks: 0,
+    overdueTasks: 0,
+    pendingReviews: 0,
+  });
+}
+
+function applyMetricsDelta(baseMetrics = {}, previousContribution = {}, nextContribution = {}) {
+  const fields = ["totalTasks", "completedTasks", "approvedTasks", "activeTasks", "overdueTasks", "pendingReviews"];
+  const nextMetrics = {};
+  fields.forEach((field) => {
+    nextMetrics[field] = Math.max(
+      0,
+      Number(baseMetrics[field] || 0) - Number(previousContribution[field] || 0) + Number(nextContribution[field] || 0)
+    );
+  });
+  nextMetrics.progress = nextMetrics.totalTasks
+    ? Math.round((nextMetrics.completedTasks / nextMetrics.totalTasks) * 100)
+    : 0;
+  return nextMetrics;
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
@@ -337,6 +396,7 @@ function AppShell() {
   const designTaskDocsRef      = useRef([]);
   const targetTaskDocsRef      = useRef([]);
   const pendingWorkspaceRef    = useRef({});
+  const liveMetricsSyncRef     = useRef({});
   const initialCacheRef        = useRef(cachedCrm);
 
   // ── Confirm dialog (UX-02 FIX: no more window.confirm) ───────────────────
@@ -597,10 +657,23 @@ function AppShell() {
       };
       const projectRef = doc(db, "projects", project.id);
       const recompute = () => {
-        metricsByProjectId[project.id] = computeProjectMetrics(workspaceByProjectId[project.id]);
+        const nextMetrics = computeProjectMetrics(workspaceByProjectId[project.id]);
+        metricsByProjectId[project.id] = nextMetrics;
         startTransition(() => {
           setLiveWorkspaceMetricsByProjectId({ ...metricsByProjectId });
         });
+        const currentProjectMeta = projectDocsRef.current.find((item) => item.id === project.id);
+        const currentSignature = JSON.stringify(currentProjectMeta?.metrics || {});
+        const nextSignature = JSON.stringify(nextMetrics);
+        if (currentSignature !== nextSignature && liveMetricsSyncRef.current[project.id] !== nextSignature) {
+          liveMetricsSyncRef.current[project.id] = nextSignature;
+          setDoc(doc(db, "projects", project.id), {
+            metrics: nextMetrics,
+            memberStats: computeProjectMemberStats(workspaceByProjectId[project.id]),
+          }, { merge: true }).catch((error) => {
+            console.error("[CRM] metrics backfill:", error?.code);
+          });
+        }
       };
       unsubs.push(
         onSnapshot(collection(projectRef, "tasks"), (snap) => {
@@ -1089,6 +1162,7 @@ function AppShell() {
     const relatedProject = projectDocsRef.current.find((project) => project.id === projectId);
     if (!canWorkInProject(profile, relatedProject) && !canCreateDesignTask(profile?.role)) return;
     const previousTask = designTaskDocsRef.current.find((item) => item.id === task.id && item.projectId === projectId) || null;
+    const previousProjectTasks = designTaskDocsRef.current.filter((item) => item.projectId === projectId);
     const next = withRecordMeta(
       task.id ? task : { ...task, id: makeId("design") },
       profile
@@ -1103,11 +1177,25 @@ function AppShell() {
         page: "design",
       }, profile)
       : [];
+    const nextProjectTasks = [
+      ...previousProjectTasks.filter((item) => item.id !== next.id),
+      { ...next, projectId },
+    ];
+    const previousContribution = summarizeDesignTaskMetrics(previousProjectTasks);
+    const nextContribution = summarizeDesignTaskMetrics(nextProjectTasks);
+    const metricsPatch = applyMetricsDelta(relatedProject?.metrics || {}, previousContribution, nextContribution);
+    const previousProjectMetrics = relatedProject?.metrics || {};
     startTransition(() => {
       setDesignTaskDocs((current) => {
         const filtered = current.filter((item) => !(item.id === next.id && item.projectId === projectId));
         return [...filtered, { ...next, projectId }];
       });
+      setProjectDocs((current) => current.map((project) => (
+        project.id === projectId
+          ? { ...project, metrics: metricsPatch, updatedAt: next.updatedAt, updatedBy: next.updatedBy }
+          : project
+      )));
+      setLiveWorkspaceMetricsByProjectId((current) => ({ ...current, [projectId]: metricsPatch }));
     });
     setSyncing(true);
     try {
@@ -1116,6 +1204,16 @@ function AppShell() {
           type: "set",
           ref: doc(db, "projects", projectId, "designTasks", next.id),
           data: next,
+          options: { merge: true },
+        },
+        {
+          type: "set",
+          ref: doc(db, "projects", projectId),
+          data: {
+            metrics: metricsPatch,
+            updatedAt: next.updatedAt,
+            updatedBy: next.updatedBy,
+          },
           options: { merge: true },
         },
         ...metaDocs.map((item) => ({
@@ -1132,6 +1230,12 @@ function AppShell() {
           const filtered = current.filter((item) => !(item.id === next.id && item.projectId === projectId));
           return previousTask ? [...filtered, previousTask] : filtered;
         });
+        setProjectDocs((current) => current.map((project) => (
+          project.id === projectId
+            ? { ...project, metrics: previousProjectMetrics }
+            : project
+        )));
+        setLiveWorkspaceMetricsByProjectId((current) => ({ ...current, [projectId]: previousProjectMetrics }));
       });
       const message = String(error?.code || "").includes("permission-denied")
         ? "Dizayn TZ saqlanmadi. Firebase Firestore Rules ichida designTasks qoidalarini publish qiling."
@@ -1148,14 +1252,48 @@ function AppShell() {
     if (!task) return;
     const ok = await confirm(`"${task.title}" TZ o'chirilsinmi?`);
     if (!ok) return;
+    const relatedProject = projectDocsRef.current.find((project) => project.id === projectId);
+    const previousProjectTasks = designTaskDocsRef.current.filter((item) => item.projectId === projectId);
+    const nextProjectTasks = previousProjectTasks.filter((item) => item.id !== taskId);
+    const previousContribution = summarizeDesignTaskMetrics(previousProjectTasks);
+    const nextContribution = summarizeDesignTaskMetrics(nextProjectTasks);
+    const previousProjectMetrics = relatedProject?.metrics || {};
+    const metricsPatch = applyMetricsDelta(previousProjectMetrics, previousContribution, nextContribution);
     startTransition(() => {
       setDesignTaskDocs((current) => current.filter((item) => item.id !== taskId));
+      setProjectDocs((current) => current.map((project) => (
+        project.id === projectId
+          ? { ...project, metrics: metricsPatch, updatedAt: isoNow(), updatedBy: profile?.uid || "" }
+          : project
+      )));
+      setLiveWorkspaceMetricsByProjectId((current) => ({ ...current, [projectId]: metricsPatch }));
     });
     setSyncing(true);
     try {
-      await commitBatchOperations([{ type: "delete", ref: doc(db, "projects", projectId, "designTasks", taskId) }]);
+      await commitBatchOperations([
+        { type: "delete", ref: doc(db, "projects", projectId, "designTasks", taskId) },
+        {
+          type: "set",
+          ref: doc(db, "projects", projectId),
+          data: {
+            metrics: metricsPatch,
+            updatedAt: isoNow(),
+            updatedBy: profile?.uid || "",
+          },
+          options: { merge: true },
+        },
+      ]);
       pushToast("TZ o'chirildi");
     } catch (error) {
+      startTransition(() => {
+        setDesignTaskDocs((current) => [...current, task]);
+        setProjectDocs((current) => current.map((project) => (
+          project.id === projectId
+            ? { ...project, metrics: previousProjectMetrics }
+            : project
+        )));
+        setLiveWorkspaceMetricsByProjectId((current) => ({ ...current, [projectId]: previousProjectMetrics }));
+      });
       setAuthError(humanizeAuthError(error));
       pushToast(humanizeAuthError(error), "error");
     } finally {
@@ -1169,6 +1307,7 @@ function AppShell() {
     const relatedProject = projectDocsRef.current.find((project) => project.id === projectId);
     if (!canWorkInProject(profile, relatedProject)) return;
     const previousTask = targetTaskDocsRef.current.find((item) => item.id === task.id && item.projectId === projectId) || null;
+    const previousProjectTasks = targetTaskDocsRef.current.filter((item) => item.projectId === projectId);
     const next = withRecordMeta(
       task.id ? task : { ...task, id: makeId("target") },
       profile
@@ -1180,11 +1319,25 @@ function AppShell() {
         page: "target",
       }, profile)
       : [];
+    const nextProjectTasks = [
+      ...previousProjectTasks.filter((item) => item.id !== next.id),
+      { ...next, projectId },
+    ];
+    const previousContribution = summarizeTargetTaskMetrics(previousProjectTasks);
+    const nextContribution = summarizeTargetTaskMetrics(nextProjectTasks);
+    const previousProjectMetrics = relatedProject?.metrics || {};
+    const metricsPatch = applyMetricsDelta(previousProjectMetrics, previousContribution, nextContribution);
     startTransition(() => {
       setTargetTaskDocs((current) => {
         const filtered = current.filter((item) => !(item.id === next.id && item.projectId === projectId));
         return [...filtered, { ...next, projectId }];
       });
+      setProjectDocs((current) => current.map((project) => (
+        project.id === projectId
+          ? { ...project, metrics: metricsPatch, updatedAt: next.updatedAt, updatedBy: next.updatedBy }
+          : project
+      )));
+      setLiveWorkspaceMetricsByProjectId((current) => ({ ...current, [projectId]: metricsPatch }));
       applyOptimisticMetaDocs(metaDocs);
     });
     setSyncing(true);
@@ -1194,6 +1347,16 @@ function AppShell() {
           type: "set",
           ref: doc(db, "projects", projectId, "targetTasks", next.id),
           data: next,
+          options: { merge: true },
+        },
+        {
+          type: "set",
+          ref: doc(db, "projects", projectId),
+          data: {
+            metrics: metricsPatch,
+            updatedAt: next.updatedAt,
+            updatedBy: next.updatedBy,
+          },
           options: { merge: true },
         },
         ...metaDocs.map((item) => ({
@@ -1210,6 +1373,12 @@ function AppShell() {
           const filtered = current.filter((item) => !(item.id === next.id && item.projectId === projectId));
           return previousTask ? [...filtered, previousTask] : filtered;
         });
+        setProjectDocs((current) => current.map((project) => (
+          project.id === projectId
+            ? { ...project, metrics: previousProjectMetrics }
+            : project
+        )));
+        setLiveWorkspaceMetricsByProjectId((current) => ({ ...current, [projectId]: previousProjectMetrics }));
       });
       const message = String(error?.code || "").includes("permission-denied")
         ? "Target task saqlanmadi. Firebase Firestore Rules ichida targetTasks qoidalarini publish qiling."
@@ -1226,20 +1395,54 @@ function AppShell() {
     if (!task) return;
     const ok = await confirm(`"${task.title}" target task o'chirilsinmi?`);
     if (!ok) return;
+    const relatedProject = projectDocsRef.current.find((project) => project.id === projectId);
+    const previousProjectTasks = targetTaskDocsRef.current.filter((item) => item.projectId === projectId);
+    const nextProjectTasks = previousProjectTasks.filter((item) => item.id !== taskId);
+    const previousContribution = summarizeTargetTaskMetrics(previousProjectTasks);
+    const nextContribution = summarizeTargetTaskMetrics(nextProjectTasks);
+    const previousProjectMetrics = relatedProject?.metrics || {};
+    const metricsPatch = applyMetricsDelta(previousProjectMetrics, previousContribution, nextContribution);
     startTransition(() => {
       setTargetTaskDocs((current) => current.filter((item) => item.id !== taskId));
+      setProjectDocs((current) => current.map((project) => (
+        project.id === projectId
+          ? { ...project, metrics: metricsPatch, updatedAt: isoNow(), updatedBy: profile?.uid || "" }
+          : project
+      )));
+      setLiveWorkspaceMetricsByProjectId((current) => ({ ...current, [projectId]: metricsPatch }));
     });
     setSyncing(true);
     try {
-      await commitBatchOperations([{ type: "delete", ref: doc(db, "projects", projectId, "targetTasks", taskId) }]);
+      await commitBatchOperations([
+        { type: "delete", ref: doc(db, "projects", projectId, "targetTasks", taskId) },
+        {
+          type: "set",
+          ref: doc(db, "projects", projectId),
+          data: {
+            metrics: metricsPatch,
+            updatedAt: isoNow(),
+            updatedBy: profile?.uid || "",
+          },
+          options: { merge: true },
+        },
+      ]);
       pushToast("Target task o'chirildi");
     } catch (error) {
+      startTransition(() => {
+        setTargetTaskDocs((current) => [...current, task]);
+        setProjectDocs((current) => current.map((project) => (
+          project.id === projectId
+            ? { ...project, metrics: previousProjectMetrics }
+            : project
+        )));
+        setLiveWorkspaceMetricsByProjectId((current) => ({ ...current, [projectId]: previousProjectMetrics }));
+      });
       setAuthError(humanizeAuthError(error));
       pushToast(humanizeAuthError(error), "error");
     } finally {
       setSyncing(false);
     }
-  }, [targetTaskDocs, confirm]);
+  }, [targetTaskDocs, confirm, profile]);
 
   // ─── Render guard ──────────────────────────────────────────────────────────
   if (!hasFirebaseConfig) return <SetupScreen />;

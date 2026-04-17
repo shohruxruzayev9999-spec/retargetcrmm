@@ -8,7 +8,7 @@ import {
 } from "../core/constants.js";
 import { makeId, isoNow, indexById } from "../core/utils.js";
 import {
-  canCreateDesignTask, canApproveDesignTask, canEditDesignTask, projectMembers,
+  canCreateDesignTask, canApproveDesignTask, canEditDesignTask, canWorkInProject, projectMembers,
 } from "../core/permissions.js";
 import { normalizeComments, createComment } from "../core/normalizers.js";
 import {
@@ -504,8 +504,8 @@ export const DesignPage = memo(function DesignPage({
   }, []);
 
   const canChangeInlineStatus = useCallback((task) => (
-    canEditDesignTask(profile, task)
-  ), [profile]);
+    canWorkInProject(profile, projectMap[task.projectId])
+  ), [profile, projectMap]);
 
   const handleInlineStatus = useCallback(async (task, nextStatus) => {
     if (!task || !nextStatus || nextStatus === task.status) return;
@@ -762,8 +762,9 @@ export const DesignPage = memo(function DesignPage({
                           {designer ? <Avatar name={designer.name} url={designer.avatarUrl} size={20} /> : <span style={{ fontSize: 11, color: T.colors.textMuted }}>—</span>}
                         </div>
                         <div onClick={(event) => event.stopPropagation()}>
-                          <InlineStatusSelect
+                          <StatusSelect
                             value={task.status}
+                            options={DESIGN_TASK_STATUSES}
                             disabled={!canChangeInlineStatus(task)}
                             onChange={(nextStatus) => handleInlineStatus(task, nextStatus)}
                           />
@@ -917,7 +918,7 @@ const DesignTaskModal = memo(function DesignTaskModal({
   const canEditForm = isNew ? canCreateDesignTask(profile?.role) : canEditDesignTask(profile, task);
   const canApprove = canApproveDesignTask(profile?.role);
   const canDelete = Boolean(task.id && (canApprove || task.smmManagerId === profile?.uid));
-  const canChangeStatus = canEditDesignTask(profile, form);
+  const canChangeStatus = canWorkInProject(profile, selectedProject || projects.find((project) => project.id === task.projectId));
 
   const projectOptions = useMemo(
     () => projects.map((project) => ({ value: project.id, label: project.name })),
