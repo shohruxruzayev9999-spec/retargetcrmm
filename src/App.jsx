@@ -590,6 +590,8 @@ function AppShell() {
         tasks: [],
         contentPlan: [],
         mediaPlan: [],
+        designTasks: [],
+        targetTasks: [],
         plans: { daily: [], weekly: [], monthly: [] },
         calls: [],
       };
@@ -617,6 +619,18 @@ function AppShell() {
           workspaceByProjectId[project.id].mediaPlan = snap.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
           recompute();
         }, (error) => console.error("[CRM] project media:", error?.code))
+      );
+      unsubs.push(
+        onSnapshot(collection(projectRef, "designTasks"), (snap) => {
+          workspaceByProjectId[project.id].designTasks = snap.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
+          recompute();
+        }, (error) => console.error("[CRM] project design:", error?.code))
+      );
+      unsubs.push(
+        onSnapshot(collection(projectRef, "targetTasks"), (snap) => {
+          workspaceByProjectId[project.id].targetTasks = snap.docs.map((entry) => normalizeStoredRecord(entry.id, entry.data()));
+          recompute();
+        }, (error) => console.error("[CRM] project target:", error?.code))
       );
       unsubs.push(
         onSnapshot(collection(projectRef, "plans"), (snap) => {
@@ -697,7 +711,15 @@ function AppShell() {
     }
     const cached = readCache(projectWorkspaceCacheKey(selectedProjectId), null);
     if (cached) {
-      setSelectedProjectWorkspace({ tasks: cached.tasks || [], contentPlan: cached.contentPlan || [], mediaPlan: cached.mediaPlan || [], plans: cached.plans || { daily: [], weekly: [], monthly: [] }, calls: cached.calls || [] });
+      setSelectedProjectWorkspace({
+        tasks: cached.tasks || [],
+        contentPlan: cached.contentPlan || [],
+        mediaPlan: cached.mediaPlan || [],
+        designTasks: cached.designTasks || [],
+        targetTasks: cached.targetTasks || [],
+        plans: cached.plans || { daily: [], weekly: [], monthly: [] },
+        calls: cached.calls || [],
+      });
       setProjectWorkspaceReady(true);
     } else {
       setSelectedProjectWorkspace(EMPTY_PROJECT_WORKSPACE);
@@ -705,7 +727,7 @@ function AppShell() {
     }
 
     const projectRef = doc(db, "projects", selectedProjectId);
-    const pending = { tasks: null, contentPlan: null, mediaPlan: null, plans: null, calls: null };
+    const pending = { tasks: null, contentPlan: null, mediaPlan: null, designTasks: null, targetTasks: null, plans: null, calls: null };
     const loaded  = new Set();
     let flushTimer = null;
     const pid = selectedProjectId;
@@ -718,6 +740,8 @@ function AppShell() {
         if (pending.tasks       !== null) patch.tasks       = pending.tasks;
         if (pending.contentPlan !== null) patch.contentPlan = pending.contentPlan;
         if (pending.mediaPlan   !== null) patch.mediaPlan   = pending.mediaPlan;
+        if (pending.designTasks !== null) patch.designTasks = pending.designTasks;
+        if (pending.targetTasks !== null) patch.targetTasks = pending.targetTasks;
         if (pending.plans       !== null) patch.plans       = pending.plans;
         if (pending.calls       !== null) patch.calls       = pending.calls;
         const optimistic = pendingWorkspaceRef.current[pid];
@@ -729,6 +753,8 @@ function AppShell() {
             tasks: patch.tasks ? mergeRecordsById(optimisticWorkspace.tasks, patch.tasks) : optimisticWorkspace.tasks,
             contentPlan: patch.contentPlan ? mergeRecordsById(optimisticWorkspace.contentPlan, patch.contentPlan) : optimisticWorkspace.contentPlan,
             mediaPlan: patch.mediaPlan ? mergeRecordsById(optimisticWorkspace.mediaPlan, patch.mediaPlan) : optimisticWorkspace.mediaPlan,
+            designTasks: patch.designTasks ? mergeRecordsById(optimisticWorkspace.designTasks, patch.designTasks) : optimisticWorkspace.designTasks,
+            targetTasks: patch.targetTasks ? mergeRecordsById(optimisticWorkspace.targetTasks, patch.targetTasks) : optimisticWorkspace.targetTasks,
             plans: patch.plans ? mergePlanWorkspace(optimisticWorkspace.plans, patch.plans) : optimisticWorkspace.plans,
             calls: patch.calls ? mergeRecordsById(optimisticWorkspace.calls, patch.calls) : optimisticWorkspace.calls,
           };
@@ -736,6 +762,8 @@ function AppShell() {
             (!patch.tasks || containsAllIds(optimisticWorkspace.tasks, patch.tasks)) &&
             (!patch.contentPlan || containsAllIds(optimisticWorkspace.contentPlan, patch.contentPlan)) &&
             (!patch.mediaPlan || containsAllIds(optimisticWorkspace.mediaPlan, patch.mediaPlan)) &&
+            (!patch.designTasks || containsAllIds(optimisticWorkspace.designTasks, patch.designTasks)) &&
+            (!patch.targetTasks || containsAllIds(optimisticWorkspace.targetTasks, patch.targetTasks)) &&
             (!patch.calls || containsAllIds(optimisticWorkspace.calls, patch.calls)) &&
             (!patch.plans || (
               containsAllIds(optimisticWorkspace.plans?.daily, patch.plans.daily) &&
@@ -746,7 +774,7 @@ function AppShell() {
         }
         startTransition(() => {
           setSelectedProjectWorkspace(cur => { const next = { ...cur, ...nextPatch }; writeCache(projectWorkspaceCacheKey(pid), next); return next; });
-          if (["tasks","contentPlan","mediaPlan","plans","calls"].every(k => loaded.has(k))) setProjectWorkspaceReady(true);
+          if (["tasks","contentPlan","mediaPlan","designTasks","targetTasks","plans","calls"].every(k => loaded.has(k))) setProjectWorkspaceReady(true);
         });
       }, 0);
     }
@@ -758,6 +786,8 @@ function AppShell() {
       onSnapshot(collection(projectRef, "tasks"),      s => { commit("tasks",       { tasks:       sortByRecent(s.docs.map(e => normalizeStoredRecord(e.id, e.data())), "updatedAt").reverse() }); }, onErr),
       onSnapshot(collection(projectRef, "content"),    s => { commit("contentPlan", { contentPlan: sortByRecent(s.docs.map(e => normalizeStoredRecord(e.id, e.data())), "updatedAt").reverse() }); }, onErr),
       onSnapshot(collection(projectRef, "mediaPlans"), s => { commit("mediaPlan",   { mediaPlan:   sortByRecent(s.docs.map(e => normalizeStoredRecord(e.id, e.data())), "updatedAt").reverse() }); }, onErr),
+      onSnapshot(collection(projectRef, "designTasks"), s => { commit("designTasks", { designTasks: sortByRecent(s.docs.map(e => normalizeStoredRecord(e.id, e.data())), "updatedAt").reverse() }); }, onErr),
+      onSnapshot(collection(projectRef, "targetTasks"), s => { commit("targetTasks", { targetTasks: sortByRecent(s.docs.map(e => normalizeStoredRecord(e.id, e.data())), "updatedAt").reverse() }); }, onErr),
       onSnapshot(collection(projectRef, "plans"),      s => { commit("plans",       { plans:       splitPlans(sortByRecent(s.docs.map(e => normalizeStoredRecord(e.id, e.data())), "updatedAt").reverse()) }); }, onErr),
       onSnapshot(collection(projectRef, "calls"),      s => { commit("calls",       { calls:       sortByRecent(s.docs.map(e => normalizeStoredRecord(e.id, e.data())), "updatedAt").reverse() }); }, onErr),
     ];
@@ -905,7 +935,15 @@ function AppShell() {
     startTransition(() => {
       setProjectDocs(nextProjects);
       if (selectedProjectId === next.id) {
-        const optimisticWorkspace = { tasks: next.tasks, contentPlan: next.contentPlan, mediaPlan: next.mediaPlan, plans: next.plans, calls: next.calls };
+        const optimisticWorkspace = {
+          tasks: next.tasks,
+          contentPlan: next.contentPlan,
+          mediaPlan: next.mediaPlan,
+          designTasks: currentProject.designTasks || [],
+          targetTasks: currentProject.targetTasks || [],
+          plans: next.plans,
+          calls: next.calls,
+        };
         pendingWorkspaceRef.current[next.id] = { workspace: optimisticWorkspace, expiresAt: Date.now() + 10000 };
         writeCache(projectWorkspaceCacheKey(next.id), optimisticWorkspace);
         setSelectedProjectWorkspace(optimisticWorkspace);
@@ -921,7 +959,15 @@ function AppShell() {
       delete pendingWorkspaceRef.current[next.id];
       if (String(e?.code || "").includes("permission-denied")) {
         const cachedWs = readCache(projectWorkspaceCacheKey(next.id), null);
-        if (cachedWs && selectedProjectId === next.id) startTransition(() => setSelectedProjectWorkspace({ tasks: cachedWs.tasks || [], contentPlan: cachedWs.contentPlan || [], mediaPlan: cachedWs.mediaPlan || [], plans: cachedWs.plans || { daily: [], weekly: [], monthly: [] }, calls: cachedWs.calls || [] }));
+        if (cachedWs && selectedProjectId === next.id) startTransition(() => setSelectedProjectWorkspace({
+          tasks: cachedWs.tasks || [],
+          contentPlan: cachedWs.contentPlan || [],
+          mediaPlan: cachedWs.mediaPlan || [],
+          designTasks: cachedWs.designTasks || [],
+          targetTasks: cachedWs.targetTasks || [],
+          plans: cachedWs.plans || { daily: [], weekly: [], monthly: [] },
+          calls: cachedWs.calls || [],
+        }));
       }
       setAuthError(humanizeAuthError(e));
       pushToast(humanizeAuthError(e), "error");

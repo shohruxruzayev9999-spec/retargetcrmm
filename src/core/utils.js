@@ -95,33 +95,124 @@ export function splitPlans(items = []) {
 }
 
 // ─── Metrics ──────────────────────────────────────────────────────────────────
-export function calcProjectProgress(project) {
+export function isTaskDoneStatus(status) {
+  return status === "Bajarildi" || status === "Tasdiqlandi";
+}
+
+export function isContentDoneStatus(status) {
+  return status === "Tasdiqlandi" || status === "E'lon qilindi" || status === "Bajarildi";
+}
+
+export function isPlanDoneStatus(status) {
+  return status === "Bajarildi" || status === "Tasdiqlandi";
+}
+
+export function isCallDoneStatus(status) {
+  return status === "Tasdiqlangan" || status === "Tugallangan" || status === "Bajarildi";
+}
+
+export function isDesignDoneStatus(status) {
+  return status === "Yakunlandi" || status === "Tasdiqlandi";
+}
+
+export function isTargetDoneStatus(status) {
+  return status === "Bajarildi" || status === "Tasdiqlandi";
+}
+
+export function calculateProjectAggregate(project) {
   const tasks = Array.isArray(project?.tasks) ? project.tasks : [];
   const contentPlan = Array.isArray(project?.contentPlan) ? project.contentPlan : [];
   const mediaPlan = Array.isArray(project?.mediaPlan) ? project.mediaPlan : [];
+  const designTasks = Array.isArray(project?.designTasks) ? project.designTasks : [];
+  const targetTasks = Array.isArray(project?.targetTasks) ? project.targetTasks : [];
   const planItems = [
     ...(Array.isArray(project?.plans?.daily) ? project.plans.daily : []),
     ...(Array.isArray(project?.plans?.weekly) ? project.plans.weekly : []),
     ...(Array.isArray(project?.plans?.monthly) ? project.plans.monthly : []),
   ];
   const calls = Array.isArray(project?.calls) ? project.calls : [];
-  const hasWorkspaceItems = tasks.length || contentPlan.length || mediaPlan.length || planItems.length || calls.length;
+  const today = todayIso();
+
+  const completedTasks =
+    tasks.filter((task) => isTaskDoneStatus(task.status)).length +
+    contentPlan.filter((item) => isContentDoneStatus(item.status)).length +
+    mediaPlan.filter((item) => isContentDoneStatus(item.status)).length +
+    planItems.filter((item) => isPlanDoneStatus(item.status)).length +
+    calls.filter((item) => isCallDoneStatus(item.status)).length +
+    designTasks.filter((item) => isDesignDoneStatus(item.status)).length +
+    targetTasks.filter((item) => isTargetDoneStatus(item.status)).length;
+
+  const approvedTasks =
+    tasks.filter((task) => task.status === "Tasdiqlandi").length +
+    contentPlan.filter((item) => item.status === "Tasdiqlandi").length +
+    mediaPlan.filter((item) => item.status === "Tasdiqlandi").length +
+    planItems.filter((item) => item.status === "Tasdiqlandi").length +
+    calls.filter((item) => item.status === "Tasdiqlangan").length +
+    designTasks.filter((item) => item.status === "Tasdiqlandi").length +
+    targetTasks.filter((item) => item.status === "Tasdiqlandi").length;
+
+  const activeTasks =
+    tasks.filter((task) => task.status === "Jarayonda" || task.status === "Ko'rib chiqilmoqda").length +
+    contentPlan.filter((item) => item.status === "Jarayonda" || item.status === "Ko'rib chiqilmoqda").length +
+    mediaPlan.filter((item) => item.status === "Jarayonda" || item.status === "Ko'rib chiqilmoqda").length +
+    planItems.filter((item) => item.status === "Jarayonda").length +
+    calls.filter((item) => item.status === "Jarayonda" || item.status === "Kutilmoqda").length +
+    designTasks.filter((item) => item.status === "Yangi TZ" || item.status === "Jarayonda" || item.status === "Ko'rib chiqilmoqda").length +
+    targetTasks.filter((item) => item.status === "Rejalashtirildi" || item.status === "Jarayonda" || item.status === "Ko'rib chiqilmoqda").length;
+
+  const overdueTasks =
+    tasks.filter((task) => task.deadline && task.deadline < today && !isTaskDoneStatus(task.status)).length +
+    contentPlan.filter((item) => item.date && item.date < today && !isContentDoneStatus(item.status)).length +
+    mediaPlan.filter((item) => item.date && item.date < today && !isContentDoneStatus(item.status)).length +
+    planItems.filter((item) => item.date && item.date < today && !isPlanDoneStatus(item.status)).length +
+    calls.filter((item) => item.date && item.date < today && !isCallDoneStatus(item.status)).length +
+    designTasks.filter((item) => item.deadline && item.deadline < today && !isDesignDoneStatus(item.status)).length +
+    targetTasks.filter((item) => item.deadline && item.deadline < today && !isTargetDoneStatus(item.status)).length;
+
+  const pendingReviews =
+    tasks.filter((task) => task.status === "Ko'rib chiqilmoqda").length +
+    contentPlan.filter((item) => item.status === "Ko'rib chiqilmoqda").length +
+    mediaPlan.filter((item) => item.status === "Ko'rib chiqilmoqda").length +
+    designTasks.filter((item) => item.status === "Ko'rib chiqilmoqda").length +
+    targetTasks.filter((item) => item.status === "Ko'rib chiqilmoqda").length;
+
+  const totalTasks =
+    tasks.length +
+    contentPlan.length +
+    mediaPlan.length +
+    planItems.length +
+    calls.length +
+    designTasks.length +
+    targetTasks.length;
+
+  return {
+    totalTasks,
+    completedTasks,
+    approvedTasks,
+    activeTasks,
+    overdueTasks,
+    pendingReviews,
+    progress: totalTasks ? Math.round((completedTasks / totalTasks) * 100) : 0,
+  };
+}
+
+export function calcProjectProgress(project) {
+  const tasks = Array.isArray(project?.tasks) ? project.tasks : [];
+  const contentPlan = Array.isArray(project?.contentPlan) ? project.contentPlan : [];
+  const mediaPlan = Array.isArray(project?.mediaPlan) ? project.mediaPlan : [];
+  const designTasks = Array.isArray(project?.designTasks) ? project.designTasks : [];
+  const targetTasks = Array.isArray(project?.targetTasks) ? project.targetTasks : [];
+  const planItems = [
+    ...(Array.isArray(project?.plans?.daily) ? project.plans.daily : []),
+    ...(Array.isArray(project?.plans?.weekly) ? project.plans.weekly : []),
+    ...(Array.isArray(project?.plans?.monthly) ? project.plans.monthly : []),
+  ];
+  const calls = Array.isArray(project?.calls) ? project.calls : [];
+  const hasWorkspaceItems = tasks.length || contentPlan.length || mediaPlan.length || planItems.length || calls.length || designTasks.length || targetTasks.length;
   if (Number.isFinite(project?.metrics?.progress) && !hasWorkspaceItems) {
     return Number(project.metrics.progress);
   }
-  const isTaskDone = (status) => status === "Bajarildi" || status === "Tasdiqlandi";
-  const isContentDone = (status) => status === "Tasdiqlandi" || status === "E'lon qilindi" || status === "Bajarildi";
-  const isPlanDone = (status) => status === "Bajarildi" || status === "Tasdiqlandi";
-  const isCallDone = (status) => status === "Tasdiqlangan" || status === "Tugallangan" || status === "Bajarildi";
-  const totalItems = tasks.length + contentPlan.length + mediaPlan.length + planItems.length + calls.length;
-  if (!totalItems) return 0;
-  const doneItems =
-    tasks.filter((task) => isTaskDone(task.status)).length +
-    contentPlan.filter((item) => isContentDone(item.status)).length +
-    mediaPlan.filter((item) => isContentDone(item.status)).length +
-    planItems.filter((item) => isPlanDone(item.status)).length +
-    calls.filter((item) => isCallDone(item.status)).length;
-  return Math.round((doneItems / totalItems) * 100);
+  return calculateProjectAggregate(project).progress;
 }
 
 // PERF-04 FIX: O(employees × projects × tasks) → O(n) index lookup

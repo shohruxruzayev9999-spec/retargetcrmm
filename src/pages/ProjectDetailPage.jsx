@@ -5,7 +5,7 @@ import {
 } from "../core/constants.js";
 import { toMoney, isoNow, makeId, indexById, calcProjectProgress } from "../core/utils.js";
 import { canWorkInProject, canManageProjectMeta, canViewProjectFinance, projectMembers } from "../core/permissions.js";
-import { normalizeComments, createComment, withRecordMeta } from "../core/normalizers.js";
+import { normalizeComments, createComment, withRecordMeta, computeProjectMetrics } from "../core/normalizers.js";
 import {
   Avatar, Button, Card, Field, Modal, EmptyState, StatusBadge,
   StatusSelect, PriorityBadge, CircleProgress, DataTable, Row, Cell, TeamSelector, CommentThread, ConfirmDialog,
@@ -1163,6 +1163,7 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
   const employeeMap = useMemo(() => indexById(employees), [employees]);
   const manager = employeeMap[project.managerId];
   const progress = calcProjectProgress(project);
+  const projectMetrics = computeProjectMetrics(project);
   const progressColor = progress >= 75 ? T.colors.green : progress >= 40 ? T.colors.accent : T.colors.orange;
   const months = useMemo(() => getMonthList(project.months), [project.months]);
   const [selectedMonthId, setSelectedMonthId] = useState(months[0]?.id || getCurrentMonthId());
@@ -1235,7 +1236,7 @@ export const ProjectDetailPage = memo(function ProjectDetailPage({ profile, proj
             <CircleProgress pct={progress} size={90} stroke={8} color={progressColor} />
             <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
               <span style={{ fontSize: 18, fontWeight: 800, color: progressColor }}>{progress}%</span>
-              <span style={{ fontSize: 10, color: T.colors.textTertiary }}>{project.tasks.filter((task) => task.status === "Bajarildi").length}/{project.tasks.length}</span>
+              <span style={{ fontSize: 10, color: T.colors.textTertiary }}>{projectMetrics.completedTasks}/{projectMetrics.totalTasks}</span>
             </div>
           </div>
           <div style={{ flex: 1, minWidth: 240 }}>

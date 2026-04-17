@@ -131,6 +131,7 @@ export const LIMITS = {
 // ─── Empty States ─────────────────────────────────────────────────────────────
 export const EMPTY_PROJECT_WORKSPACE = {
   tasks: [], contentPlan: [], mediaPlan: [],
+  designTasks: [], targetTasks: [],
   plans: { daily: [], weekly: [], monthly: [] },
   calls: [],
 };

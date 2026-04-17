@@ -1,4 +1,6 @@
-import { makeId, isoNow, todayIso } from "./utils.js";
+import {
+  makeId, isoNow, todayIso, calculateProjectAggregate,
+} from "./utils.js";
 import { ROLE_META, SCHEMA_VERSION } from "./constants.js";
 
 // Forward declaration to avoid circular dep — canManagePeople logic inlined
@@ -47,6 +49,8 @@ export function normalizeProject(project) {
     tasks: Array.isArray(project.tasks) ? project.tasks : [],
     contentPlan: Array.isArray(project.contentPlan) ? project.contentPlan : [],
     mediaPlan: Array.isArray(project.mediaPlan) ? project.mediaPlan : [],
+    designTasks: Array.isArray(project.designTasks) ? project.designTasks : [],
+    targetTasks: Array.isArray(project.targetTasks) ? project.targetTasks : [],
     plans: {
       daily:   Array.isArray(project.plans?.daily)   ? project.plans.daily   : [],
       weekly:  Array.isArray(project.plans?.weekly)  ? project.plans.weekly  : [],
@@ -153,50 +157,7 @@ export function mergeEmployeeDocs(publicUsers, privateUsers, viewerRole, project
 
 // ─── Metric helpers ───────────────────────────────────────────────────────────
 export function computeProjectMetrics(project) {
-  const tasks = Array.isArray(project.tasks) ? project.tasks : [];
-  const contentPlan = Array.isArray(project.contentPlan) ? project.contentPlan : [];
-  const mediaPlan = Array.isArray(project.mediaPlan) ? project.mediaPlan : [];
-  const planItems = [
-    ...(Array.isArray(project.plans?.daily) ? project.plans.daily : []),
-    ...(Array.isArray(project.plans?.weekly) ? project.plans.weekly : []),
-    ...(Array.isArray(project.plans?.monthly) ? project.plans.monthly : []),
-  ];
-  const calls = Array.isArray(project.calls) ? project.calls : [];
-  const today = todayIso();
-  const isTaskDone = (status) => status === "Bajarildi" || status === "Tasdiqlandi";
-  const isContentDone = (status) => status === "Tasdiqlandi" || status === "E'lon qilindi" || status === "Bajarildi";
-  const isPlanDone = (status) => status === "Bajarildi" || status === "Tasdiqlandi";
-  const isCallDone = (status) => status === "Tasdiqlangan" || status === "Tugallangan" || status === "Bajarildi";
-  const completedTasks =
-    tasks.filter(t => isTaskDone(t.status)).length +
-    contentPlan.filter(i => isContentDone(i.status)).length +
-    mediaPlan.filter(i => isContentDone(i.status)).length +
-    planItems.filter(i => isPlanDone(i.status)).length +
-    calls.filter(i => isCallDone(i.status)).length;
-  const approvedTasks =
-    tasks.filter(t => t.status === "Tasdiqlandi").length +
-    contentPlan.filter(i => i.status === "Tasdiqlandi").length +
-    mediaPlan.filter(i => i.status === "Tasdiqlandi").length +
-    planItems.filter(i => i.status === "Tasdiqlandi").length +
-    calls.filter(i => i.status === "Tasdiqlangan").length;
-  const activeTasks =
-    tasks.filter(t => t.status === "Jarayonda" || t.status === "Ko'rib chiqilmoqda").length +
-    contentPlan.filter(i => i.status === "Jarayonda" || i.status === "Ko'rib chiqilmoqda").length +
-    mediaPlan.filter(i => i.status === "Jarayonda" || i.status === "Ko'rib chiqilmoqda").length +
-    planItems.filter(i => i.status === "Jarayonda").length +
-    calls.filter(i => i.status === "Jarayonda" || i.status === "Kutilmoqda").length;
-  const overdueTasks =
-    tasks.filter(t => t.deadline && t.deadline < today && !isTaskDone(t.status)).length +
-    contentPlan.filter(i => i.date && i.date < today && !isContentDone(i.status)).length +
-    mediaPlan.filter(i => i.date && i.date < today && !isContentDone(i.status)).length +
-    planItems.filter(i => i.date && i.date < today && !isPlanDone(i.status)).length +
-    calls.filter(i => i.date && i.date < today && !isCallDone(i.status)).length;
-  const pendingReviews =
-    tasks.filter(t => t.status === "Ko'rib chiqilmoqda").length +
-    contentPlan.filter(i => i.status === "Ko'rib chiqilmoqda").length +
-    mediaPlan.filter(i => i.status === "Ko'rib chiqilmoqda").length;
-  const totalTasks = tasks.length + contentPlan.length + mediaPlan.length + planItems.length + calls.length;
-  return { totalTasks, completedTasks, approvedTasks, activeTasks, overdueTasks, pendingReviews, progress: totalTasks ? Math.round((completedTasks / totalTasks) * 100) : 0 };
+  return calculateProjectAggregate(project);
 }
 
 export function computeProjectMemberStats(project) {
@@ -235,6 +196,8 @@ export function hydrateProject(metaProject, workspace = {}) {
     tasks:       workspace.tasks       ?? metaProject.tasks       ?? [],
     contentPlan: workspace.contentPlan ?? metaProject.contentPlan ?? [],
     mediaPlan:   workspace.mediaPlan   ?? metaProject.mediaPlan   ?? [],
+    designTasks: workspace.designTasks ?? metaProject.designTasks ?? [],
+    targetTasks: workspace.targetTasks ?? metaProject.targetTasks ?? [],
     months:      workspace.months      ?? metaProject.months      ?? [],
     plans:       workspace.plans       ?? metaProject.plans       ?? { daily: [], weekly: [], monthly: [] },
     calls:       workspace.calls       ?? metaProject.calls       ?? [],
