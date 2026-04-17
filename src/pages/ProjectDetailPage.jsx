@@ -114,6 +114,51 @@ function hasContentRowValue(row, defaultOwnerId) {
   );
 }
 
+function createContentPlanRow(existing, defaultOwnerId, monthId) {
+  const ownerIds = normalizeMultiIds(existing?.ownerIds, existing?.ownerId);
+  const platforms = normalizeMultiIds(existing?.platforms, existing?.platform);
+  const statuses = normalizeMultiIds(existing?.statuses, existing?.status);
+  return {
+    rowId: existing?.id || makeId("content-row"),
+    existing: existing || null,
+    date: existing?.date || `${monthId}-01`,
+    format: existing?.format || "Post",
+    topic: existing?.topic || "",
+    caption: existing?.caption || "",
+    ownerId: existing?.ownerId || defaultOwnerId,
+    ownerIds: ownerIds.length ? ownerIds : (defaultOwnerId ? [defaultOwnerId] : []),
+    status: existing?.status || "Rejalashtirildi",
+    statuses: statuses.length ? statuses : ["Rejalashtirildi"],
+    note: existing?.note || "",
+    platform: existing?.platform || "Instagram",
+    platforms: platforms.length ? platforms : ["Instagram"],
+  };
+}
+
+function sortContentRows(rows = []) {
+  return [...rows].sort((left, right) => {
+    const leftDate = String(left.date || "");
+    const rightDate = String(right.date || "");
+    if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+    const leftTime = String(left.existing?.updatedAt || left.existing?.createdAt || "");
+    const rightTime = String(right.existing?.updatedAt || right.existing?.createdAt || "");
+    return rightTime.localeCompare(leftTime);
+  });
+}
+
+function getMonthRange(monthId) {
+  const start = `${monthId}-01`;
+  const [year, month] = String(monthId || "").split("-").map(Number);
+  if (!year || !month) {
+    return { min: start, max: start };
+  }
+  const lastDay = new Date(year, month, 0).getDate();
+  return {
+    min: start,
+    max: `${monthId}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
 function hasMediaRowValue(row, defaultOwnerId) {
   const owners = normalizeMultiIds(row.ownerIds, row.ownerId);
   const platforms = normalizeMultiIds(row.platforms, row.platform);
@@ -638,41 +683,40 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
   const defaultOwnerId = assignableEmployees[0]?.id || "";
   const contentItems = project.contentPlan || [];
   const [rows, setRows] = useState([]);
-  const [scenarioDay, setScenarioDay] = useState(null);
+  const [scenarioRowId, setScenarioRowId] = useState(null);
   const assigneeNames = useMemo(
     () => Object.fromEntries(assignableEmployees.map((e) => [e.id, e.name])),
     [assignableEmployees]
   );
+  const monthRange = useMemo(() => getMonthRange(selectedMonthId), [selectedMonthId]);
 
   useEffect(() => {
     const scoped = contentItems.filter((item) => recordMatchesMonth(item, selectedMonthId));
-    setRows(DAY_ROWS.map((day) => {
-      const existing = scoped.find((item) => getRecordDay(item) === day) || null;
-      const ownerIds = normalizeMultiIds(existing?.ownerIds, existing?.ownerId);
-      const platforms = normalizeMultiIds(existing?.platforms, existing?.platform);
-      const statuses = normalizeMultiIds(existing?.statuses, existing?.status);
-      return {
-        day,
-        existing,
-        platform: existing?.platform || "Instagram",
-        platforms: platforms.length ? platforms : ["Instagram"],
-        format: existing?.format || "Post",
-        topic: existing?.topic || "",
-        caption: existing?.caption || "",
-        ownerId: existing?.ownerId || defaultOwnerId,
-        ownerIds: ownerIds.length ? ownerIds : (defaultOwnerId ? [defaultOwnerId] : []),
-        status: existing?.status || "Rejalashtirildi",
-        statuses: statuses.length ? statuses : ["Rejalashtirildi"],
-        note: existing?.note || "",
-      };
-    }));
+    const nextRows = scoped.length
+      ? sortContentRows(scoped.map((item) => createContentPlanRow(item, defaultOwnerId, selectedMonthId)))
+      : [createContentPlanRow(null, defaultOwnerId, selectedMonthId)];
+    setRows(nextRows);
   }, [contentItems, selectedMonthId, defaultOwnerId]);
 
-  function updateRow(day, key, value) {
-    setRows((current) => current.map((row) => (row.day === day ? { ...row, [key]: value } : row)));
+  function updateRow(rowId, key, value) {
+    setRows((current) => current.map((row) => (row.rowId === rowId ? { ...row, [key]: value } : row)));
   }
 
-  const activeScenarioRow = rows.find((row) => row.day === scenarioDay) || null;
+  function addRow() {
+    setRows((current) => [
+      ...current,
+      createContentPlanRow(null, defaultOwnerId, selectedMonthId),
+    ]);
+  }
+
+  function removeRow(rowId) {
+    setRows((current) => {
+      const nextRows = current.filter((row) => row.rowId !== rowId);
+      return nextRows.length ? nextRows : [createContentPlanRow(null, defaultOwnerId, selectedMonthId)];
+    });
+  }
+
+  const activeScenarioRow = rows.find((row) => row.rowId === scenarioRowId) || null;
 
   function saveRows() {
     const otherItems = contentItems.filter((item) => !recordMatchesMonth(item, selectedMonthId));
@@ -681,7 +725,7 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
       .map((row) => withRecordMeta({
         ...(row.existing || {}),
         id: row.existing?.id || makeId("content"),
-        date: buildMonthDate(selectedMonthId, row.day),
+        date: row.date || monthRange.min,
         monthId: selectedMonthId,
         platform: row.platforms?.[0] || row.platform || "Instagram",
         platforms: row.platforms?.length ? row.platforms : ["Instagram"],
@@ -703,21 +747,34 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12 }}>
         <div>
           <div style={{ fontSize: 18, fontWeight: 900 }}>Kontent reja</div>
-          <div style={{ marginTop: 4, fontSize: 12, color: T.colors.textSecondary }}>{getMonthLabel(selectedMonthId)} uchun 31 kunlik jadval</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: T.colors.textSecondary }}>{getMonthLabel(selectedMonthId)} uchun postlar reja ro'yxati</div>
         </div>
-        {sectionEditable ? <Button onClick={saveRows}>Jadvalni saqlash</Button> : null}
+        <div style={{ display: "flex", gap: 8 }}>
+          {sectionEditable ? <Button variant="secondary" onClick={addRow}>+ Kontent qo'shish</Button> : null}
+          {sectionEditable ? <Button onClick={saveRows}>Jadvalni saqlash</Button> : null}
+        </div>
       </div>
-      <DataTable columns={["Kun", "Format", "Mavzu", "Ssenariy", "Mas'ul", "Holat", "Izoh", "Platforma"]}>
+      <DataTable columns={["Post sanasi", "Format", "Mavzu", "Ssenariy", "Mas'ul", "Holat", "Izoh", "Platforma", "Amal"]}>
         {rows.map((row) => (
-          <Row key={row.day}>
-            <Cell style={{ fontWeight: 800 }}>{String(row.day).padStart(2, "0")}</Cell>
-            <Cell style={{ minWidth: 165 }}><SelectCellInput value={row.format} onChange={(value) => updateRow(row.day, "format", value)} disabled={!sectionEditable} options={FORMATS} style={{ minWidth: 150 }} /></Cell>
-            <Cell style={{ minWidth: 190 }}><TextCellInput value={row.topic} onChange={(value) => updateRow(row.day, "topic", value)} disabled={!sectionEditable} placeholder="Mavzu" /></Cell>
+          <Row key={row.rowId}>
+            <Cell style={{ minWidth: 150 }}>
+              <input
+                type="date"
+                value={row.date}
+                min={monthRange.min}
+                max={monthRange.max}
+                onChange={(event) => updateRow(row.rowId, "date", event.target.value)}
+                disabled={!sectionEditable}
+                style={SHEET_INPUT_STYLE}
+              />
+            </Cell>
+            <Cell style={{ minWidth: 165 }}><SelectCellInput value={row.format} onChange={(value) => updateRow(row.rowId, "format", value)} disabled={!sectionEditable} options={FORMATS} style={{ minWidth: 150 }} /></Cell>
+            <Cell style={{ minWidth: 220 }}><TextCellInput value={row.topic} onChange={(value) => updateRow(row.rowId, "topic", value)} disabled={!sectionEditable} placeholder="Mavzu" /></Cell>
             <Cell style={{ minWidth: 360 }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <button
                   type="button"
-                  onClick={() => setScenarioDay(row.day)}
+                  onClick={() => setScenarioRowId(row.rowId)}
                   style={{
                     ...SHEET_INPUT_STYLE,
                     cursor: "pointer",
@@ -743,7 +800,7 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
               <CompactMultiSelect
                 variant="assignee"
                 value={row.ownerIds}
-                onChange={(next) => updateRow(row.day, "ownerIds", next)}
+                onChange={(next) => updateRow(row.rowId, "ownerIds", next)}
                 options={assignableEmployees.map((employee) => ({ value: employee.id, label: employee.name }))}
                 assigneeNames={assigneeNames}
                 disabled={!sectionEditable}
@@ -754,39 +811,48 @@ function MonthlyContentSheet({ profile, project, employees, selectedMonthId, onU
               <CompactMultiSelect
                 variant="status"
                 value={row.statuses}
-                onChange={(next) => updateRow(row.day, "statuses", next)}
+                onChange={(next) => updateRow(row.rowId, "statuses", next)}
                 options={CONTENT_STATUSES}
                 disabled={!sectionEditable}
                 placeholder="Holat"
               />
             </Cell>
-            <Cell style={{ minWidth: 150 }}><TextCellInput value={row.note} onChange={(value) => updateRow(row.day, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
+            <Cell style={{ minWidth: 180 }}><TextCellInput value={row.note} onChange={(value) => updateRow(row.rowId, "note", value)} disabled={!sectionEditable} placeholder="Izoh" /></Cell>
             <Cell style={{ minWidth: 172 }}>
               <CompactMultiSelect
                 variant="platform"
                 value={row.platforms}
-                onChange={(next) => updateRow(row.day, "platforms", next)}
+                onChange={(next) => updateRow(row.rowId, "platforms", next)}
                 options={PLATFORMS}
                 disabled={!sectionEditable}
                 placeholder="Platforma"
               />
+            </Cell>
+            <Cell style={{ minWidth: 120, whiteSpace: "nowrap" }}>
+              {sectionEditable ? (
+                <Button variant="danger" onClick={() => removeRow(row.rowId)} style={{ padding: "7px 10px" }}>
+                  O'chirish
+                </Button>
+              ) : (
+                "—"
+              )}
             </Cell>
           </Row>
         ))}
       </DataTable>
       {activeScenarioRow ? (
         <ScenarioModal
-          day={activeScenarioRow.day}
+          label={activeScenarioRow.date || getMonthLabel(selectedMonthId)}
           value={activeScenarioRow.caption}
           editable={sectionEditable}
-          onClose={() => setScenarioDay(null)}
+          onClose={() => setScenarioRowId(null)}
           onSave={(text) => {
-            updateRow(activeScenarioRow.day, "caption", text);
-            setScenarioDay(null);
+            updateRow(activeScenarioRow.rowId, "caption", text);
+            setScenarioRowId(null);
           }}
           onClear={() => {
-            updateRow(activeScenarioRow.day, "caption", "");
-            setScenarioDay(null);
+            updateRow(activeScenarioRow.rowId, "caption", "");
+            setScenarioRowId(null);
           }}
         />
       ) : null}
@@ -1126,11 +1192,11 @@ function WorkspaceModal({ initialValue, onClose, onSubmit }) {
   );
 }
 
-function ScenarioModal({ value, onClose, onSave, onClear, editable, day }) {
+function ScenarioModal({ value, onClose, onSave, onClear, editable, label }) {
   const [text, setText] = useState(value || "");
 
   return (
-    <Modal title={`${String(day).padStart(2, "0")} kun — Ssenariy`} onClose={onClose} width={760}>
+    <Modal title={`${label || "Kontent"} — Ssenariy`} onClose={onClose} width={760}>
       <Field
         label="Ssenariy matni"
         type="textarea"
