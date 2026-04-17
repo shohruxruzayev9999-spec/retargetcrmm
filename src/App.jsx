@@ -19,7 +19,7 @@ import {
 import {
   makeId, isoNow, toMoney, clamp, sortByRecent, indexById,
   readCache, writeCache, projectWorkspaceCacheKey,
-  flattenPlans, splitPlans, calcProjectProgress, buildProjectCaches, todayIso,
+  flattenPlans, splitPlans, calcProjectProgress, buildProjectCaches, todayIso, summarizePortfolioMetrics,
   healthScore, humanizeAuthError,
 } from "./core/utils.js";
 import {
@@ -433,16 +433,12 @@ function AppShell() {
   const dashboardSummary = useMemo(() => {
     const liveMetricKeys = Object.keys(liveWorkspaceMetricsByProjectId);
     if (!liveMetricKeys.length) return projectCaches.dashboardSummary;
-    const metricsByProjectId = {};
-    projects.forEach((project) => {
-      metricsByProjectId[project.id] = liveWorkspaceMetricsByProjectId[project.id] || project.metrics || {};
-    });
-    return {
-      totalTasks: projects.reduce((sum, project) => sum + Number(metricsByProjectId[project.id]?.totalTasks || 0), 0),
-      completedTasks: projects.reduce((sum, project) => sum + Number(metricsByProjectId[project.id]?.completedTasks || 0), 0),
-      activeProjects: projectCaches.dashboardSummary.activeProjects,
-      pendingReviews: projectCaches.dashboardSummary.pendingReviews,
-    };
+    return summarizePortfolioMetrics(
+      projects.map((project) => ({
+        ...project,
+        metrics: liveWorkspaceMetricsByProjectId[project.id] || project.metrics || {},
+      }))
+    );
   }, [projects, projectCaches.dashboardSummary, liveWorkspaceMetricsByProjectId]);
   const financialDashboard = useMemo(() => buildFinancialDashboard({
     projects,

@@ -196,6 +196,38 @@ export function calculateProjectAggregate(project) {
   };
 }
 
+export function summarizePortfolioMetrics(projects = []) {
+  return (projects || []).reduce((acc, project) => {
+    const hasWorkspaceItems =
+      (Array.isArray(project?.tasks) && project.tasks.length) ||
+      (Array.isArray(project?.contentPlan) && project.contentPlan.length) ||
+      (Array.isArray(project?.mediaPlan) && project.mediaPlan.length) ||
+      (Array.isArray(project?.designTasks) && project.designTasks.length) ||
+      (Array.isArray(project?.targetTasks) && project.targetTasks.length) ||
+      (Array.isArray(project?.calls) && project.calls.length) ||
+      (Array.isArray(project?.plans?.daily) && project.plans.daily.length) ||
+      (Array.isArray(project?.plans?.weekly) && project.plans.weekly.length) ||
+      (Array.isArray(project?.plans?.monthly) && project.plans.monthly.length);
+    const metrics = hasWorkspaceItems ? calculateProjectAggregate(project) : (project?.metrics || {});
+    acc.totalTasks += Number(metrics.totalTasks || 0);
+    acc.completedTasks += Number(metrics.completedTasks || 0);
+    acc.approvedTasks += Number(metrics.approvedTasks || 0);
+    acc.activeTasks += Number(metrics.activeTasks || 0);
+    acc.overdueTasks += Number(metrics.overdueTasks || 0);
+    acc.pendingReviews += Number(metrics.pendingReviews || 0);
+    if (project?.status === "Jarayonda") acc.activeProjects += 1;
+    return acc;
+  }, {
+    totalTasks: 0,
+    completedTasks: 0,
+    approvedTasks: 0,
+    activeTasks: 0,
+    overdueTasks: 0,
+    pendingReviews: 0,
+    activeProjects: 0,
+  });
+}
+
 export function calcProjectProgress(project) {
   const tasks = Array.isArray(project?.tasks) ? project.tasks : [];
   const contentPlan = Array.isArray(project?.contentPlan) ? project.contentPlan : [];
@@ -234,7 +266,7 @@ export function buildProjectCaches(projects, designTaskDocs = []) {
   const designTaskCountByProjectId = {};
   const employeeStats = new Map();
   const assignmentsByEmployeeId = new Map();
-  let totalTasks = 0, completedTasks = 0, activeProjects = 0, pendingReviews = 0;
+  let totalTasks = 0, completedTasks = 0;
 
   const ensureEmployee = id => {
     if (!id) return null;
@@ -267,11 +299,6 @@ export function buildProjectCaches(projects, designTaskDocs = []) {
   for (const project of projects) {
     const progress = calcProjectProgress(project);
     progressByProjectId[project.id] = progress;
-    if (project.status === "Jarayonda") activeProjects++;
-    const pending = Array.isArray(project.contentPlan) && project.contentPlan.length
-      ? project.contentPlan.filter(i => i.status === "Ko'rib chiqilmoqda").length
-      : Number(project.metrics?.pendingReviews || 0);
-    pendingReviews += pending;
 
     const memberIds = new Set([project.managerId, ...project.teamIds].filter(Boolean));
     const chip = { id: project.id, name: project.name, status: project.status, progress };
@@ -360,32 +387,32 @@ export function buildProjectCaches(projects, designTaskDocs = []) {
     designTaskCountByProjectId,
     assignmentsByEmployeeId: Object.fromEntries(assignmentsByEmployeeId),
     employeeMetricsById,
-    dashboardSummary: { totalTasks, completedTasks, activeProjects, pendingReviews },
+    dashboardSummary: summarizePortfolioMetrics(projects),
   };
 }
 
-export function healthScore(projects) {
-  const allTasks = projects.flatMap(p => (Array.isArray(p.tasks) && p.tasks.length ? p.tasks : []));
-  if (!allTasks.length && projects.some(p => p.metrics)) {
-    const agg = projects.reduce(
-      (acc, p) => {
-        const m = p.metrics || {};
-        acc.total += Number(m.totalTasks || 0); acc.completed += Number(m.completedTasks || 0);
-        acc.approved += Number(m.approvedTasks || 0); acc.active += Number(m.activeTasks || 0);
-        acc.overdue += Number(m.overdueTasks || 0);
-        return acc;
-      },
-      { total: 0, completed: 0, approved: 0, active: 0, overdue: 0 }
-    );
-    if (!agg.total) return 55;
-    return Math.round(clamp((agg.completed / agg.total) * 62 + (agg.approved / agg.total) * 18 + (agg.active / agg.total) * 10 - agg.overdue * 4 + 20, 0, 100));
-  }
-  if (!allTasks.length) return 55;
-  const c = allTasks.filter(t => t.status === "Bajarildi" || t.status === "Tasdiqlandi").length;
-  const a = allTasks.filter(t => t.status === "Jarayonda" || t.status === "Ko'rib chiqilmoqda").length;
-  const ap = allTasks.filter(t => t.status === "Tasdiqlandi").length;
-  const ov = allTasks.filter(t => t.deadline && t.deadline < todayIso() && t.status !== "Bajarildi" && t.status !== "Tasdiqlandi").length;
-  return Math.round(clamp((c / allTasks.length) * 62 + (ap / allTasks.length) * 18 + (a / allTasks.length) * 10 - ov * 4 + 20, 0, 100));
+export function healthScore(input) {
+  const summary = Array.isArray(input) ? summarizePortfolioMetrics(input) : {
+    totalTasks: Number(input?.totalTasks || 0),
+    completedTasks: Number(input?.completedTasks || 0),
+    approvedTasks: Number(input?.approvedTasks || 0),
+    activeTasks: Number(input?.activeTasks || 0),
+    overdueTasks: Number(input?.overdueTasks || 0),
+    pendingReviews: Number(input?.pendingReviews || 0),
+  };
+  if (!summary.totalTasks) return 55;
+  const completionRate = summary.completedTasks / summary.totalTasks;
+  const approvalRate = summary.approvedTasks / summary.totalTasks;
+  const activeRate = summary.activeTasks / summary.totalTasks;
+  const overdueRate = summary.overdueTasks / summary.totalTasks;
+  const reviewRate = summary.pendingReviews / summary.totalTasks;
+  const score = 35
+    + completionRate * 35
+    + approvalRate * 15
+    + activeRate * 6
+    + reviewRate * 4
+    - overdueRate * 30;
+  return Math.round(clamp(score, 12, 100));
 }
 
 export function humanizeAuthError(error) {

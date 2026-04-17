@@ -35,7 +35,7 @@ function MotivationGauge({ score }) {
 }
 
 export const DashboardPage = memo(function DashboardPage({ profile, projects, employees, employeeMetricsById, progressByProjectId, dashboardSummary, loading, onOpenProject }) {
-  const score = healthScore(projects);
+  const score = healthScore(dashboardSummary);
   const employeeMap = useMemo(() => indexById(employees), [employees]);
 
   const ranking = employees
@@ -186,6 +186,9 @@ export const DashboardPage = memo(function DashboardPage({ profile, projects, em
           </div>
 
           <MotivationGauge score={score} />
+          <div style={{ marginTop: 10, fontSize: 12, color: T.colors.textMuted }}>
+            Motivatsion ko'rsatkich endi umumiy bajarilish, tasdiqlangan ishlar, faol oqim va kechikkan ishlar ulushiga qarab hisoblanadi.
+          </div>
         </>
       ) : null}
     </div>
