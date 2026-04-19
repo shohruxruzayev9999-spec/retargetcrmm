@@ -2,7 +2,7 @@ import React, { useMemo } from "react";
 import { T, SHOOT_STATUSES } from "../core/constants.js";
 import { Avatar, Button, StatusSelect, Card } from "./ui/index.jsx";
 import { normalizeComments, createComment } from "../core/normalizers.js";
-import { canWorkInProject } from "../core/permissions.js";
+import { canManageShoot, canWorkInProject } from "../core/permissions.js";
 
 export function ShootingKanban({ shoots, projects, employees, profile, onSaveShoot, onDeleteShoot, onAddShoot }) {
   const projectMap = useMemo(() => Object.fromEntries(projects.map(p => [p.id, p])), [projects]);
@@ -25,7 +25,7 @@ export function ShootingKanban({ shoots, projects, employees, profile, onSaveSho
     <div style={{ display: "flex", gap: 16, overflowX: "auto", paddingBottom: 20 }}>
       {projects.map((project) => {
         const projectShoots = shootsByProject[project.id] || [];
-        const canMutate = canWorkInProject(profile, project);
+        const canAddShoot = canWorkInProject(profile, project);
 
         return (
           <div
@@ -58,6 +58,7 @@ export function ShootingKanban({ shoots, projects, employees, profile, onSaveSho
               {projectShoots.length ? (
                 projectShoots.map((shoot) => {
                   const operator = employeeMap[shoot.operatorId];
+                  const canMutate = canManageShoot(profile, shoot, project);
                   return (
                     <Card
                       key={shoot.id}
@@ -135,7 +136,7 @@ export function ShootingKanban({ shoots, projects, employees, profile, onSaveSho
             </div>
 
             {/* Add Button */}
-            {canMutate && (
+            {canAddShoot && (
               <button
                 onClick={() => onAddShoot?.(project.id)}
                 style={{

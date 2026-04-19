@@ -504,7 +504,7 @@ export const DesignPage = memo(function DesignPage({
   }, []);
 
   const canChangeInlineStatus = useCallback((task) => (
-    canWorkInProject(profile, projectMap[task.projectId])
+    canEditDesignTask(profile, task) || canWorkInProject(profile, projectMap[task.projectId])
   ), [profile, projectMap]);
 
   const handleInlineStatus = useCallback(async (task, nextStatus) => {
@@ -928,7 +928,11 @@ const DesignTaskModal = memo(function DesignTaskModal({
   );
   const canApprove = canApproveDesignTask(profile?.role);
   const canDelete = Boolean(task.id && (canApprove || task.smmManagerId === profile?.uid));
-  const canChangeStatus = canWorkInProject(
+  const canChangeStatus = canEditDesignTask(profile, {
+    ...task,
+    ...form,
+    projectId: form.projectId || task.projectId,
+  }) || canWorkInProject(
     profile,
     selectedProject || projects.find((project) => project.id === task.projectId)
   );

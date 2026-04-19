@@ -33,6 +33,12 @@ export function canEditDesignTask(profile, task) {
   return task.smmManagerId === profile.uid || task.designerId === profile.uid;
 }
 
+export function canManageShoot(profile, shoot, project) {
+  if (!profile || !shoot) return false;
+  if (canWorkInProject(profile, project)) return true;
+  return shoot.operatorId === profile.uid;
+}
+
 export function canManageTargetStatus(profile) {
   if (!profile) return false;
   const probe = `${profile.name || ""} ${profile.email || ""}`.toLowerCase();
@@ -70,7 +76,7 @@ export function visibleProjects(profile, projects) {
 
 export function visibleShoots(profile, shoots, projects) {
   const allowed = new Set(visibleProjects(profile, projects).map(p => p.id));
-  return shoots.filter(s => allowed.has(s.projectId));
+  return shoots.filter(s => allowed.has(s.projectId) || s.operatorId === profile?.uid);
 }
 
 export function visibleEmployees(profile, employees) {

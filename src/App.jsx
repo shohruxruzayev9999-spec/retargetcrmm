@@ -25,7 +25,7 @@ import {
 import {
   canEdit, canManagePeople, canWorkInProject,
   canManageProjectMeta, visibleProjects, visibleShoots, visibleEmployees,
-  projectMembers, isProjectMember, canViewFinancialDashboard,
+  projectMembers, isProjectMember, canViewFinancialDashboard, canManageShoot,
   canCreateDesignTask, canApproveDesignTask, canEditDesignTask,
 } from "./core/permissions.js";
 import {
@@ -1124,7 +1124,8 @@ function AppShell() {
   const saveShoot = useCallback(async (item) => {
     if (!item.projectId || !item.type || !COLS.shoots) return;
     const relatedProject = projectDocsRef.current.find(p => p.id === item.projectId);
-    if (!canWorkInProject(profile, relatedProject)) return;
+    const existingShoot = item.id ? shootDocsRef.current.find((shoot) => shoot.id === item.id) : null;
+    if (!(existingShoot ? canManageShoot(profile, existingShoot, relatedProject) : canWorkInProject(profile, relatedProject))) return;
     const next = withRecordMeta(item.id ? item : { ...item, id: makeId("shoot") }, profile);
     const metaDocs = canEdit(profile?.role)
       ? createMetaDocs({ notifyText: "Syomka yozuvi yangilandi", auditText: `Syomka saqlandi: ${next.type}`, page: "shooting" }, profile)
@@ -1139,7 +1140,7 @@ function AppShell() {
   const deleteShoot = useCallback(async (id) => {
     const shoot = shootDocs.find(s => s.id === id);
     const proj  = projectDocsRef.current.find(p => p.id === shoot?.projectId);
-    if (!canWorkInProject(profile, proj)) return;
+    if (!canManageShoot(profile, shoot, proj)) return;
     const ok = await confirm("Syomka yozuvi o'chirilsinmi?");
     if (!ok) return;
     const metaDocs = canEdit(profile?.role)
