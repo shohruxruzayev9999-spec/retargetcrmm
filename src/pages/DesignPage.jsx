@@ -1008,8 +1008,10 @@ const DesignTaskModal = memo(function DesignTaskModal({
         monthId: form.monthId || task.monthId || (form.deadline ? form.deadline.slice(0, 7) : activeMonth),
       };
       if (!updated.id) updated.id = makeId("design");
-      await onSave(projectId, updated);
-      onClose();
+      const saved = await onSave(projectId, updated);
+      if (saved !== false) {
+        onClose();
+      }
     } finally {
       setSaving(false);
     }
@@ -1019,8 +1021,10 @@ const DesignTaskModal = memo(function DesignTaskModal({
     if (!task.id) return;
     setSaving(true);
     try {
-      await onDelete(task.projectId, task.id);
-      onClose();
+      const deleted = await onDelete(task.projectId, task.id);
+      if (deleted !== false) {
+        onClose();
+      }
     } finally {
       setSaving(false);
     }

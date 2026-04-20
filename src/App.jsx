@@ -1155,9 +1155,9 @@ function AppShell() {
 
   // ─── Design task CRUD ────────────────────────────────────────────────────
   const saveDesignTask = useCallback(async (projectId, task) => {
-    if (!projectId || !db) return;
+    if (!projectId || !db) return false;
     const relatedProject = projectDocsRef.current.find((project) => project.id === projectId);
-    if (!canWorkInProject(profile, relatedProject) && !canCreateDesignTask(profile?.role)) return;
+    if (!canWorkInProject(profile, relatedProject) && !canCreateDesignTask(profile?.role)) return false;
     const previousTask = designTaskDocsRef.current.find((item) => item.id === task.id && item.projectId === projectId) || null;
     const previousProjectTasks = designTaskDocsRef.current.filter((item) => item.projectId === projectId);
     const next = withRecordMeta(
@@ -1221,6 +1221,7 @@ function AppShell() {
         })),
       ]);
       pushToast(`TZ saqlandi: ${next.title}`);
+      return true;
     } catch (error) {
       startTransition(() => {
         setDesignTaskDocs((current) => {
@@ -1239,6 +1240,7 @@ function AppShell() {
         : humanizeAuthError(error);
       setAuthError(message);
       pushToast(message, "error");
+      return false;
     } finally {
       setSyncing(false);
     }
@@ -1246,9 +1248,9 @@ function AppShell() {
 
   const deleteDesignTask = useCallback(async (projectId, taskId) => {
     const task = designTaskDocs.find((item) => item.id === taskId);
-    if (!task) return;
+    if (!task) return false;
     const ok = await confirm(`"${task.title}" TZ o'chirilsinmi?`);
-    if (!ok) return;
+    if (!ok) return false;
     const relatedProject = projectDocsRef.current.find((project) => project.id === projectId);
     const previousProjectTasks = designTaskDocsRef.current.filter((item) => item.projectId === projectId);
     const nextProjectTasks = previousProjectTasks.filter((item) => item.id !== taskId);
@@ -1281,6 +1283,7 @@ function AppShell() {
         },
       ]);
       pushToast("TZ o'chirildi");
+      return true;
     } catch (error) {
       startTransition(() => {
         setDesignTaskDocs((current) => [...current, task]);
@@ -1293,6 +1296,7 @@ function AppShell() {
       });
       setAuthError(humanizeAuthError(error));
       pushToast(humanizeAuthError(error), "error");
+      return false;
     } finally {
       setSyncing(false);
     }

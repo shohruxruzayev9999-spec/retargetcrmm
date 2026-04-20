@@ -100,7 +100,15 @@ function hasContentRowValue(row, defaultOwnerId) {
   const statuses = normalizeMultiIds(row.statuses, row.status);
   const ownerSorted = owners.slice().sort().join(",");
   const defSorted = (defaultOwnerId ? [defaultOwnerId] : []).slice().sort().join(",");
+  const baselineMonthId =
+    row.monthId
+    || row.existing?.monthId
+    || String(row.date || "").slice(0, 7)
+    || getCurrentMonthId();
+  const baselineDate = row.existing?.date || `${baselineMonthId}-01`;
+  const hasMeaningfulDate = Boolean(row.date && row.date !== baselineDate);
   return Boolean(
+    hasMeaningfulDate ||
     row.topic.trim() ||
     row.caption.trim() ||
     row.note.trim() ||
@@ -121,6 +129,7 @@ function createContentPlanRow(existing, defaultOwnerId, monthId) {
   return {
     rowId: existing?.id || makeId("content-row"),
     existing: existing || null,
+    monthId,
     date: existing?.date || `${monthId}-01`,
     format: existing?.format || "Post",
     topic: existing?.topic || "",
