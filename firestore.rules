@@ -34,6 +34,22 @@ service cloud.firestore {
       return currentRole() in ["CEO", "MANAGER", "SUPERVISOR"];
     }
 
+    function isShootManagerRole() {
+      let user = currentUserData();
+      return isManagerRole() || (
+        user != null && (
+          user.role == "CEO" ||
+          user.title == "CEO" ||
+          user.role == "Boshqaruvchi" ||
+          user.title == "Boshqaruvchi" ||
+          (user.role != null && user.role.matches(".*[Mm]enejer.*")) ||
+          (user.title != null && user.title.matches(".*[Mm]enejer.*")) ||
+          (user.role != null && user.role.matches(".*[Mm]anager.*")) ||
+          (user.title != null && user.title.matches(".*[Mm]anager.*"))
+        )
+      );
+    }
+
     function isSelf(userId) {
       return signedIn() && uid() == userId;
     }
@@ -145,7 +161,7 @@ service cloud.firestore {
       allow list:           if signedIn();
       allow get:            if signedIn();
       allow create:         if canWorkOnProject(request.resource.data.projectId);
-      allow update, delete: if canWorkOnProject(resource.data.projectId) || resource.data.operatorId == uid();
+      allow update, delete: if canWorkOnProject(resource.data.projectId) || resource.data.operatorId == uid() || isShootManagerRole();
     }
 
     // ── Meetings ──────────────────────────────────────────────────────────────

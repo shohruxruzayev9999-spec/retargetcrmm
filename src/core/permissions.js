@@ -33,8 +33,17 @@ export function canEditDesignTask(profile, task) {
   return task.smmManagerId === profile.uid || task.designerId === profile.uid;
 }
 
+function hasManagerTitle(profile) {
+  const text = `${profile?.role || ""} ${profile?.roleCode || ""} ${profile?.title || ""}`.toLowerCase();
+  return text.includes("ceo") ||
+    text.includes("manager") ||
+    text.includes("menejer") ||
+    text.includes("boshqaruvchi");
+}
+
 export function canManageShoot(profile, shoot, project) {
   if (!profile || !shoot) return false;
+  if (hasManagerTitle(profile)) return true;
   if (canWorkInProject(profile, project)) return true;
   return shoot.operatorId === profile.uid;
 }
